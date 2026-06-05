@@ -212,44 +212,6 @@
     });
   }
 
-  function renderNotesList(notes) {
-    var list = document.querySelector("#sf-helper-notes-list");
-
-    if (!list) {
-      return;
-    }
-
-    list.textContent = "";
-
-    if (!notes.length) {
-      list.appendChild(createElement("div", {
-        className: "sf-helper-empty",
-        text: "No notes found."
-      }));
-      return;
-    }
-
-    notes.forEach(function (note) {
-      var row = createElement("div", { className: "sf-helper-note-row" });
-      var meta = createElement("div", { className: "sf-helper-note-meta" });
-
-      meta.appendChild(createElement("span", {
-        className: "sf-helper-note-date",
-        text: note.dateLabel || ""
-      }));
-      meta.appendChild(createElement("span", {
-        className: "sf-helper-note-time",
-        text: note.timeLabel || ""
-      }));
-      row.appendChild(meta);
-      row.appendChild(createElement("div", {
-        className: "sf-helper-note-text",
-        text: note.text || ""
-      }));
-      list.appendChild(row);
-    });
-  }
-
   function renderNotes(summary) {
     summary = summary || {};
     state.notes.notes = summary.notes || [];
@@ -270,8 +232,6 @@
     if (count) {
       count.textContent = state.notes.notes.length + (state.notes.notes.length === 1 ? " note" : " notes");
     }
-
-    renderNotesList(state.notes.notes);
   }
 
   function currentWhiteboardPatientKey() {
@@ -740,12 +700,6 @@
     });
     var pane = createElement("section", { className: "sf-helper-pane sf-helper-notes-pane" });
     var header = createElement("div", { className: "sf-helper-pane-header" });
-    var list = createElement("div", {
-      className: "sf-helper-notes-list",
-      attrs: {
-        id: "sf-helper-notes-list"
-      }
-    });
     var output = createElement("textarea", {
       className: "sf-helper-output sf-helper-notes-output",
       attrs: {
@@ -780,7 +734,6 @@
 
     actions.appendChild(copyButton);
     pane.appendChild(header);
-    pane.appendChild(list);
     pane.appendChild(output);
     pane.appendChild(actions);
     panel.appendChild(pane);
