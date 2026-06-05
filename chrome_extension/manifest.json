@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Smart Flow Sheet Helper",
+  "version": "0.1.0",
+  "description": "Read-only helpers for Smart Flow patient and flowsheet data.",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.smartflowsheet.com/*",
+        "https://*.smartflowsheet.com/*",
+        "file:///*"
+      ],
+      "js": [
+        "src/value-parsers.js",
+        "src/smartflow-reader.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.smartflowsheet.com/*",
+        "https://*.smartflowsheet.com/*",
+        "file:///*"
+      ],
+      "css": [
+        "src/ui.css"
+      ],
+      "js": [
+        "src/content-bridge.js",
+        "src/ui.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
