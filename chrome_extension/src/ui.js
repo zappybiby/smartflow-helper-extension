@@ -793,6 +793,46 @@
     return row;
   }
 
+  function buildSummaryItem(label, valueId) {
+    var stat = createElement("div", { className: "sf-helper-summary-item" });
+
+    stat.appendChild(createElement("div", {
+      className: "sf-helper-summary-label",
+      text: label
+    }));
+    stat.appendChild(createElement("div", {
+      className: "sf-helper-summary-value",
+      attrs: {
+        id: valueId
+      }
+    }));
+
+    return stat;
+  }
+
+  function buildFluidOutput(label, valueId, className) {
+    var outputClassName = "sf-helper-fluid-output";
+
+    if (className) {
+      outputClassName += " " + className;
+    }
+
+    var output = createElement("div", { className: outputClassName });
+
+    output.appendChild(createElement("div", {
+      className: "sf-helper-fluid-output-label",
+      text: label
+    }));
+    output.appendChild(createElement("div", {
+      className: "sf-helper-fluid-output-value",
+      attrs: {
+        id: valueId
+      }
+    }));
+
+    return output;
+  }
+
   function buildMaintenanceModeOption(value, title, detail) {
     var label = createElement("label", { className: "sf-helper-radio-option" });
     var input = createElement("input", {
@@ -868,7 +908,12 @@
       }
     });
     var grid = createElement("div", { className: "sf-helper-fluid-grid" });
-    var maintenance = createElement("section", { className: "sf-helper-pane" });
+    var hero = createElement("section", { className: "sf-helper-fluid-hero" });
+    var controls = createElement("div", { className: "sf-helper-fluid-controls" });
+    var summary = createElement("div", { className: "sf-helper-fluid-card sf-helper-fluid-summary" });
+    var summaryGrid = createElement("div", { className: "sf-helper-fluid-summary-grid" });
+    var results = createElement("div", { className: "sf-helper-fluid-card sf-helper-fluid-results" });
+    var mode = createElement("section", { className: "sf-helper-fluid-card sf-helper-fluid-mode" });
     var maintenanceMode = createElement("div", {
       className: "sf-helper-radio-group",
       attrs: {
@@ -876,9 +921,10 @@
         "aria-label": "Maintenance formula"
       }
     });
-    var target = createElement("section", { className: "sf-helper-pane" });
-    var targetDayField = createElement("label", { className: "sf-helper-field" });
-    var targetHourField = createElement("label", { className: "sf-helper-field" });
+    var target = createElement("section", { className: "sf-helper-fluid-card sf-helper-fluid-target" });
+    var targetInputs = createElement("div", { className: "sf-helper-target-inputs" });
+    var targetDayField = createElement("label", { className: "sf-helper-field sf-helper-target-field" });
+    var targetHourField = createElement("label", { className: "sf-helper-field sf-helper-target-field" });
     var targetDayInput = createElement("input", {
       className: "sf-helper-number-input",
       attrs: {
@@ -900,22 +946,29 @@
       }
     });
 
-    maintenance.appendChild(createElement("h2", {
+    summary.appendChild(createElement("h2", {
       className: "sf-helper-pane-title",
-      text: "Maintenance"
+      text: "Patient"
     }));
-    maintenanceMode.appendChild(buildMaintenanceModeOption("default", "Default maintenance", "Dog 60 mL/kg/day; Cat 40 mL/kg/day"));
-    maintenanceMode.appendChild(buildMaintenanceModeOption("bodyWeight", "Body weight based", "Dog 132 * BW(kg)^0.75; Cat 80 * BW(kg)^0.75"));
-    maintenance.appendChild(maintenanceMode);
-    maintenance.appendChild(buildRateRow("Weight", "sf-helper-fluid-weight"));
-    maintenance.appendChild(buildRateRow("Species", "sf-helper-fluid-species"));
-    maintenance.appendChild(buildRateRow("mL/day", "sf-helper-maintenance-day"));
-    maintenance.appendChild(buildRateRow("mL/hr", "sf-helper-maintenance-hour"));
-    maintenance.appendChild(buildRateRow("Formula", "sf-helper-maintenance-formula"));
+    summaryGrid.appendChild(buildSummaryItem("Weight", "sf-helper-fluid-weight"));
+    summaryGrid.appendChild(buildSummaryItem("Species", "sf-helper-fluid-species"));
+    summaryGrid.appendChild(buildSummaryItem("Maint / day", "sf-helper-maintenance-day"));
+    summaryGrid.appendChild(buildSummaryItem("Maint / hr", "sf-helper-maintenance-hour"));
+    summary.appendChild(summaryGrid);
+    results.appendChild(buildFluidOutput("Pump rate", "sf-helper-target-hour", "sf-helper-fluid-output-primary"));
+    results.appendChild(buildFluidOutput("Total per day", "sf-helper-target-day", "sf-helper-fluid-output-secondary"));
+
+    mode.appendChild(createElement("h2", {
+      className: "sf-helper-pane-title",
+      text: "Formula"
+    }));
+    maintenanceMode.appendChild(buildMaintenanceModeOption("default", "Standard", "Dog 60 / Cat 40 mL/kg/day"));
+    maintenanceMode.appendChild(buildMaintenanceModeOption("bodyWeight", "Weight based", "Dog 132, Cat 80 x kg^0.75"));
+    mode.appendChild(maintenanceMode);
 
     target.appendChild(createElement("h2", {
       className: "sf-helper-pane-title",
-      text: "Target Rate"
+      text: "Target"
     }));
     targetDayField.appendChild(createElement("span", {
       className: "sf-helper-field-label",
@@ -927,12 +980,9 @@
       text: "mL/kg/hr"
     }));
     targetHourField.appendChild(targetHourInput);
-    target.appendChild(targetDayField);
-    target.appendChild(targetHourField);
-    target.appendChild(buildRateRow("mL/kg/day", "sf-helper-target-day-rate"));
-    target.appendChild(buildRateRow("mL/kg/hr", "sf-helper-target-hour-rate"));
-    target.appendChild(buildRateRow("mL/day", "sf-helper-target-day"));
-    target.appendChild(buildRateRow("mL/hr", "sf-helper-target-hour"));
+    targetInputs.appendChild(targetDayField);
+    targetInputs.appendChild(targetHourField);
+    target.appendChild(targetInputs);
 
     targetDayInput.addEventListener("input", function () {
       state.fluids.targetMode = "day";
@@ -943,8 +993,12 @@
       refreshFluids();
     });
 
-    grid.appendChild(maintenance);
-    grid.appendChild(target);
+    hero.appendChild(summary);
+    hero.appendChild(results);
+    controls.appendChild(mode);
+    controls.appendChild(target);
+    grid.appendChild(hero);
+    grid.appendChild(controls);
     panel.appendChild(grid);
 
     return panel;

@@ -4,7 +4,7 @@
   var DEFAULT_MARGIN = 20;
   var NARROW_MARGIN = 12;
   var GAP = 12;
-  var DEFAULT_PANEL_WIDTH = 360;
+  var DEFAULT_PANEL_WIDTH = 468;
   var MIN_PANEL_WIDTH = 300;
   var MIN_PANEL_HEIGHT = 300;
   var DEFAULT_PANEL_MAX_HEIGHT = 620;
@@ -160,7 +160,7 @@
         ) :
         helperSize.height;
       var height = options.open ?
-        Math.min(helperSize.height || maxHeight, maxHeight) :
+        maxHeight :
         helperSize.height;
 
       if (options.open) {
@@ -201,6 +201,7 @@
       left: Math.round(rect.left),
       bottom: Math.round(viewport.height - rect.bottom),
       panelWidth: Math.round(placementCandidate.width),
+      panelHeight: Math.round(placementCandidate.height),
       panelMaxHeight: Math.round(placementCandidate.maxHeight),
       compact: false,
       rect: rect,
@@ -314,9 +315,11 @@
 
     if (options.open) {
       root.style.setProperty("--sf-helper-panel-width", placement.panelWidth + "px");
+      root.style.setProperty("--sf-helper-panel-height", placement.panelHeight + "px");
       root.style.setProperty("--sf-helper-panel-max-height", placement.panelMaxHeight + "px");
     } else {
       root.style.removeProperty("--sf-helper-panel-width");
+      root.style.removeProperty("--sf-helper-panel-height");
       root.style.removeProperty("--sf-helper-panel-max-height");
     }
 

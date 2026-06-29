@@ -81,6 +81,7 @@
           if (method === "getFluidRateSummary") {
             return Promise.resolve({
               patient: {
+                weightKg: 27.8,
                 weightKgText: "27.8 kg",
                 weight: {
                   text: "27.8 kg"
@@ -90,6 +91,7 @@
                 }
               },
               maintenance: {
+                available: true,
                 mlPerDayText: "1668 mL/day",
                 mlPerHourText: "70 mL/hr",
                 formula: "60 mL/kg/day",
