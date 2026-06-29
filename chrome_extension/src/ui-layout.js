@@ -4,8 +4,10 @@
   var DEFAULT_MARGIN = 20;
   var NARROW_MARGIN = 12;
   var GAP = 12;
-  var DEFAULT_PANEL_WIDTH = 680;
-  var COMPACT_PANEL_WIDTH = 560;
+  var DEFAULT_PANEL_WIDTH = 360;
+  var MIN_PANEL_WIDTH = 300;
+  var MIN_PANEL_HEIGHT = 300;
+  var DEFAULT_PANEL_MAX_HEIGHT = 620;
 
   var WHITEBOARD_TABLE_SELECTORS = [
     "#flowsheetTable",
@@ -53,6 +55,14 @@
       a.bottom > b.top - gap;
   }
 
+  function horizontallyOverlaps(left, width, rect, gap) {
+    gap = Number.isFinite(gap) ? gap : 0;
+
+    return hasArea(rect) &&
+      left < rect.right + gap &&
+      left + width > rect.left - gap;
+  }
+
   function placedRect(left, bottom, width, height, viewport) {
     var safeWidth = Math.max(0, width);
     var safeHeight = Math.max(0, height);
@@ -91,6 +101,30 @@
     return Math.min(width, Math.max(0, tableLeft - left - GAP));
   }
 
+  function maxHeightBelowBugPanels(left, bottom, width, viewport, bugPanelRects) {
+    var topLimit = 0;
+
+    bugPanelRects.forEach(function (bugPanelRect) {
+      if (!horizontallyOverlaps(left, width, bugPanelRect, 0)) {
+        return;
+      }
+
+      topLimit = Math.max(topLimit, bugPanelRect.bottom + GAP);
+    });
+
+    return Math.max(0, viewport.height - bottom - topLimit);
+  }
+
+  function rightOfBugPanels(margin, bugPanelRects) {
+    return bugPanelRects.reduce(function (left, bugPanelRect) {
+      if (!hasArea(bugPanelRect)) {
+        return left;
+      }
+
+      return Math.max(left, bugPanelRect.right + GAP);
+    }, margin);
+  }
+
   function collisionReport(rect, tableRects, bugPanelRects) {
     var tableOverlaps = tableRects.filter(function (tableRect) {
       return overlaps(rect, tableRect, 0);
@@ -112,44 +146,63 @@
     var helperSize = options.helperSize;
     var tableRects = options.tableRects || [];
     var bugPanelRects = options.bugPanelRects || [];
-    var left = margin;
     var bottom = margin;
-    var width = Math.min(DEFAULT_PANEL_WIDTH, Math.max(0, viewport.width - (margin * 2)));
-    var height = helperSize.height;
+    var desiredWidth = options.open ? DEFAULT_PANEL_WIDTH : helperSize.width;
 
-    if (!options.open) {
-      width = helperSize.width;
-    }
+    function candidate(left) {
+      var maxViewportWidth = Math.max(0, viewport.width - left - margin);
+      var width = Math.min(desiredWidth, maxViewportWidth);
+      var maxHeight = options.open ?
+        Math.min(
+          DEFAULT_PANEL_MAX_HEIGHT,
+          Math.max(0, viewport.height - bottom - margin),
+          maxHeightBelowBugPanels(left, bottom, width, viewport, bugPanelRects)
+        ) :
+        helperSize.height;
+      var height = options.open ?
+        Math.min(helperSize.height || maxHeight, maxHeight) :
+        helperSize.height;
 
-    width = fitWidthBeforeTables(left, bottom, width, height, viewport, tableRects);
-
-    var rect = placedRect(left, bottom, width, height, viewport);
-    bugPanelRects.some(function (bugPanelRect) {
-      if (!overlaps(rect, bugPanelRect, 0)) {
-        return false;
+      if (options.open) {
+        width = fitWidthBeforeTables(left, bottom, width, height, viewport, tableRects);
       }
 
+      return {
+        left: left,
+        width: width,
+        height: height,
+        maxHeight: maxHeight,
+        rect: placedRect(left, bottom, width, height, viewport)
+      };
+    }
+
+    var placementCandidate = candidate(margin);
+
+    if (
+      options.open &&
+      placementCandidate.maxHeight < MIN_PANEL_HEIGHT &&
+      bugPanelRects.length
+    ) {
       var shiftedLeft = Math.min(
-        Math.max(margin, bugPanelRect.right + GAP),
-        Math.max(margin, viewport.width - width - margin)
+        rightOfBugPanels(margin, bugPanelRects),
+        Math.max(margin, viewport.width - desiredWidth - margin)
       );
+      var shiftedCandidate = candidate(shiftedLeft);
 
-      left = shiftedLeft;
-      width = options.open ?
-        fitWidthBeforeTables(left, bottom, width, height, viewport, tableRects) :
-        helperSize.width;
-      rect = placedRect(left, bottom, width, height, viewport);
+      if (shiftedCandidate.width >= Math.min(MIN_PANEL_WIDTH, desiredWidth)) {
+        placementCandidate = shiftedCandidate;
+      }
+    }
 
-      return true;
-    });
-
+    var rect = placementCandidate.rect;
     var collisions = collisionReport(rect, tableRects, bugPanelRects);
 
     return {
       left: Math.round(rect.left),
       bottom: Math.round(viewport.height - rect.bottom),
-      panelWidth: Math.round(width),
-      compact: options.open && width <= COMPACT_PANEL_WIDTH,
+      panelWidth: Math.round(placementCandidate.width),
+      panelMaxHeight: Math.round(placementCandidate.maxHeight),
+      compact: false,
       rect: rect,
       collisions: collisions
     };
@@ -261,8 +314,10 @@
 
     if (options.open) {
       root.style.setProperty("--sf-helper-panel-width", placement.panelWidth + "px");
+      root.style.setProperty("--sf-helper-panel-max-height", placement.panelMaxHeight + "px");
     } else {
       root.style.removeProperty("--sf-helper-panel-width");
+      root.style.removeProperty("--sf-helper-panel-max-height");
     }
 
     root.setAttribute("data-sf-helper-layout-overlap", placement.collisions.hasOverlap ? "true" : "false");

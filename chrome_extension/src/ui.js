@@ -7,6 +7,7 @@
   var layoutSecondPassFrame = null;
   var state = {
     activeTab: "vitals",
+    activeMetric: "bloodGlucose",
     bloodGlucose: {
       results: [],
       formattedText: ""
@@ -677,8 +678,17 @@
 
   function buildMetricPane(type, title) {
     var prefix = type === "bloodPressure" ? "bp" : "bg";
-    var pane = createElement("section", { className: "sf-helper-pane" });
+    var pane = createElement("section", {
+      className: "sf-helper-pane",
+      attrs: {
+        "data-sf-helper-metric-panel": type
+      }
+    });
     var header = createElement("div", { className: "sf-helper-pane-header" });
+
+    if (state.activeMetric !== type) {
+      pane.setAttribute("hidden", "hidden");
+    }
 
     header.appendChild(createElement("h2", {
       className: "sf-helper-pane-title",
@@ -727,6 +737,43 @@
     pane.appendChild(actions);
 
     return pane;
+  }
+
+  function selectMetric(type) {
+    state.activeMetric = type === "bloodPressure" ? "bloodPressure" : "bloodGlucose";
+
+    Array.prototype.slice.call(document.querySelectorAll("[data-sf-helper-metric-tab]")).forEach(function (button) {
+      button.setAttribute("aria-selected", button.getAttribute("data-sf-helper-metric-tab") === state.activeMetric ? "true" : "false");
+    });
+
+    Array.prototype.slice.call(document.querySelectorAll("[data-sf-helper-metric-panel]")).forEach(function (panel) {
+      var selected = panel.getAttribute("data-sf-helper-metric-panel") === state.activeMetric;
+      if (selected) {
+        panel.removeAttribute("hidden");
+      } else {
+        panel.setAttribute("hidden", "hidden");
+      }
+    });
+  }
+
+  function buildMetricTab(type, label) {
+    var selected = state.activeMetric === type;
+    var tab = createElement("button", {
+      className: "sf-helper-metric-tab",
+      text: label,
+      attrs: {
+        type: "button",
+        role: "tab",
+        "aria-selected": selected ? "true" : "false",
+        "data-sf-helper-metric-tab": type
+      }
+    });
+
+    tab.addEventListener("click", function () {
+      selectMetric(type);
+    });
+
+    return tab;
   }
 
   function buildRateRow(label, valueId) {
@@ -791,10 +838,20 @@
         "data-sf-helper-panel": "vitals"
       }
     });
+    var metricTabs = createElement("div", {
+      className: "sf-helper-metric-tabs",
+      attrs: {
+        role: "tablist",
+        "aria-label": "Vitals type"
+      }
+    });
     var split = createElement("div", { className: "sf-helper-split" });
 
+    metricTabs.appendChild(buildMetricTab("bloodGlucose", "Blood Glucose"));
+    metricTabs.appendChild(buildMetricTab("bloodPressure", "Blood Pressure"));
     split.appendChild(buildMetricPane("bloodGlucose", "Blood Glucose"));
     split.appendChild(buildMetricPane("bloodPressure", "Blood Pressure"));
+    panel.appendChild(metricTabs);
     panel.appendChild(split);
 
     return panel;
@@ -1084,17 +1141,9 @@
 
   function buildPanel() {
     var root = createElement("div", {
+      className: OPEN_CLASS,
       attrs: {
         id: ROOT_ID
-      }
-    });
-
-    var launcher = createElement("button", {
-      className: "sf-helper-launcher",
-      text: "SF",
-      attrs: {
-        type: "button",
-        title: "Smart Flow Helper"
       }
     });
 
@@ -1121,16 +1170,7 @@
         title: "Refresh"
       }
     });
-    var closeButton = createElement("button", {
-      className: "sf-helper-icon-button",
-      text: "X",
-      attrs: {
-        type: "button",
-        title: "Close"
-      }
-    });
     windowActions.appendChild(refreshButton);
-    windowActions.appendChild(closeButton);
     header.appendChild(windowActions);
 
     var tabs = createElement("div", {
@@ -1163,19 +1203,7 @@
     panel.appendChild(header);
     panel.appendChild(tabs);
     panel.appendChild(body);
-    root.appendChild(launcher);
     root.appendChild(panel);
-
-    launcher.addEventListener("click", function () {
-      root.classList.add(OPEN_CLASS);
-      scheduleHelperPlacement();
-      refreshActiveTab();
-    });
-
-    closeButton.addEventListener("click", function () {
-      root.classList.remove(OPEN_CLASS);
-      scheduleHelperPlacement();
-    });
 
     refreshButton.addEventListener("click", function () {
       refreshActiveTab({
@@ -1198,6 +1226,7 @@
     watchPatientNavigation();
     watchSmartFlowNotesOpen();
     handleLocationChange();
+    refreshActiveTab();
   }
 
   if (document.readyState === "loading") {

@@ -61,8 +61,21 @@ const desktopOpen = choose({
 });
 
 assert(desktopOpen.left === 20, "desktop open: helper should stay bottom-left when it fits there");
-assert(desktopOpen.panelWidth <= 478, "desktop open: helper should shrink before the whiteboard table");
+assert(desktopOpen.panelWidth === 360, "desktop open: helper should use the stable narrow panel width");
+assert(desktopOpen.panelMaxHeight <= 489, "desktop open: helper should fit below the minimized bug panel");
 assertNoOverlap("desktop open", desktopOpen, desktopTables, desktopBugPanel);
+
+const patientOpen = choose({
+  viewport: { width: 1920, height: 900 },
+  open: true,
+  helperSize: { width: 680, height: 476 },
+  tableRects: [rect(505, 402, 1400, 613)],
+  bugPanelRects: desktopBugPanel
+});
+
+assert(patientOpen.left === 20, "patient open: helper should stay bottom-left");
+assert(patientOpen.panelWidth === desktopOpen.panelWidth, "patient open: helper width should not change between whiteboards");
+assertNoOverlap("patient open", patientOpen, [rect(505, 402, 1400, 613)], desktopBugPanel);
 
 const shortTables = [rect(520, 220, 1180, 620)];
 const shortBugPanel = [rect(0, 250, 50, 356)];
@@ -75,7 +88,7 @@ const shortOpen = choose({
 });
 
 assert(shortOpen.left >= 62, "short open: helper should move right of the minimized bug panel");
-assert(shortOpen.panelWidth <= 446, "short open: helper should still fit before the whiteboard table");
+assert(shortOpen.panelWidth === 360, "short open: helper should keep the stable narrow panel width when there is room");
 assertNoOverlap("short open", shortOpen, shortTables, shortBugPanel);
 
 const minimized = choose({
