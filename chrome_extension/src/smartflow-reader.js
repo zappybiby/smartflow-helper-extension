@@ -237,16 +237,61 @@
     return Math.round(value) + " mL/hr";
   }
 
-  function maintenanceMultiplier(species) {
+  function normalizeMaintenanceMode(value) {
+    return value === "bodyWeight" ? "bodyWeight" : "default";
+  }
+
+  function maintenanceSettings(species, mode) {
+    var normalizedMode = normalizeMaintenanceMode(mode);
+
+    if (normalizedMode === "bodyWeight") {
+      if (species === "dog") {
+        return {
+          mode: normalizedMode,
+          multiplier: 132,
+          exponent: 0.75,
+          formula: "132 * BW(kg)^0.75"
+        };
+      }
+
+      if (species === "cat") {
+        return {
+          mode: normalizedMode,
+          multiplier: 80,
+          exponent: 0.75,
+          formula: "80 * BW(kg)^0.75"
+        };
+      }
+
+      return {
+        mode: normalizedMode,
+        multiplier: null,
+        exponent: 0.75,
+        formula: ""
+      };
+    }
+
     if (species === "dog") {
-      return 132;
+      return {
+        mode: normalizedMode,
+        mlPerKgDay: 60,
+        formula: "60 mL/kg/day"
+      };
     }
 
     if (species === "cat") {
-      return 80;
+      return {
+        mode: normalizedMode,
+        mlPerKgDay: 40,
+        formula: "40 mL/kg/day"
+      };
     }
 
-    return null;
+    return {
+      mode: normalizedMode,
+      mlPerKgDay: null,
+      formula: ""
+    };
   }
 
   function parseFluidTarget(target) {
@@ -352,6 +397,7 @@
       age: hospitalization.age || "",
       color: patient.colorName || "",
       fileNumber: hospitalization.customField || "",
+      customNumber: hospitalization.patientCustomField || patient.customField || "",
       problems: Array.isArray(hospitalization.diseases) ? hospitalization.diseases.slice() : [],
       criticalNote: hospitalization.alergy || "",
       owner: {
@@ -391,6 +437,7 @@
     var weightText = findRenderedWeight(tags);
     var speciesText = "";
     var fileNumber = "";
+    var customNumber = "";
 
     for (var i = 0; i < basicInfo.length; i++) {
       if (/\b(canine|feline|dog|cat|equine|horse)\b/i.test(basicInfo[i])) {
@@ -399,6 +446,10 @@
 
       if (/^File Number:/i.test(basicInfo[i])) {
         fileNumber = basicInfo[i].replace(/^File Number:\s*/i, "");
+      }
+
+      if (/^Custom:/i.test(basicInfo[i])) {
+        customNumber = basicInfo[i].replace(/^Custom:\s*/i, "");
       }
     }
 
@@ -418,6 +469,7 @@
       age: basicRows[1] ? textOf(basicRows[1]) : "",
       color: basicRows[2] ? textOf(basicRows[2]) : "",
       fileNumber: fileNumber,
+      customNumber: customNumber,
       problems: problems,
       criticalNote: firstText([".patient-card-critical"], panel).replace(/^Critical:\s*/i, ""),
       owner: {
@@ -962,19 +1014,868 @@
     return getValueParsers().formatTime(dateLike, fallbackLabel);
   }
 
+  function getControlledMedicationTools() {
+    if (!window.SmartFlowControlledMedications) {
+      throw new Error("Controlled medication list is not loaded");
+    }
+
+    return window.SmartFlowControlledMedications;
+  }
+
+  function getWhiteboardScope() {
+    var candidates = [
+      "#whiteboard-table-full",
+      "#whiteboard-table",
+      ".tabs-container",
+      ".whiteboard-table-holder",
+      "[data-ng-view]",
+      "#ng-app"
+    ];
+
+    for (var i = 0; i < candidates.length; i++) {
+      var element = document.querySelector(candidates[i]);
+      var scope = getAngularScope(element);
+
+      if (scope && (Array.isArray(scope.hospitalizations) || scope.jsonProvider || scope.hospitalization)) {
+        return scope;
+      }
+    }
+
+    return null;
+  }
+
+  function readHospitalizationsFromScope(scope) {
+    if (!scope) {
+      return [];
+    }
+
+    if (Array.isArray(scope.hospitalizations)) {
+      return scope.hospitalizations;
+    }
+
+    if (scope.jsonProvider && typeof scope.jsonProvider.data === "function") {
+      try {
+        var providerData = scope.jsonProvider.data();
+        if (Array.isArray(providerData)) {
+          return providerData;
+        }
+      } catch (error) {
+        return [];
+      }
+    }
+
+    return scope.hospitalization ? [scope.hospitalization] : [];
+  }
+
+  function firstValue(values) {
+    for (var i = 0; i < values.length; i++) {
+      if (values[i] !== null && values[i] !== undefined && String(values[i]).trim() !== "") {
+        return values[i];
+      }
+    }
+
+    return "";
+  }
+
+  function normalizePatientFromHospitalization(hospitalization) {
+    hospitalization = hospitalization || {};
+
+    var patient = hospitalization.patient || {};
+    var owner = patient.owner || {};
+    var flowsheetIds = Array.isArray(hospitalization.flowsheetIds) ?
+      hospitalization.flowsheetIds.slice() :
+      [];
+
+    return {
+      hospitalizationId: hospitalization.id || "",
+      name: firstValue([hospitalization.name, hospitalization.patientName, patient.name]),
+      ownerName: [owner.nameLast, owner.nameFirst].filter(Boolean).join(" "),
+      ownerLastName: owner.nameLast || "",
+      cage: hospitalization.cage || "",
+      fileNumber: hospitalization.customField || "",
+      customNumber: firstValue([hospitalization.patientCustomField, patient.customField]),
+      curFlowsheetId: hospitalization.curFlowsheetId || "",
+      flowsheetIds: flowsheetIds,
+      flowsheets: Array.isArray(hospitalization.flowsheets) ? hospitalization.flowsheets : []
+    };
+  }
+
+  function visibleWhiteboardPatientIds() {
+    var result = {};
+    var count = 0;
+
+    function addId(id) {
+      var normalized = String(id || "").toLowerCase();
+
+      if (!normalized || result[normalized]) {
+        return;
+      }
+
+      result[normalized] = true;
+      count += 1;
+    }
+
+    Array.prototype.slice.call(document.querySelectorAll("#whiteboard-table tr[data-testid='whiteboard-patient-row'][data-id]")).forEach(function (row) {
+      if (isVisible(row)) {
+        addId(row.getAttribute("data-id"));
+      }
+    });
+
+    if (count) {
+      return result;
+    }
+
+    Array.prototype.slice.call(document.querySelectorAll(".tabs-container [data-hosp]")).forEach(function (tab) {
+      if (isVisible(tab)) {
+        addId(tab.getAttribute("data-hosp"));
+      }
+    });
+
+    return count ? result : null;
+  }
+
+  function isPatientPageVisible() {
+    var panel = document.querySelector("#patient-table .patient-card-container");
+    var flowsheet = document.querySelector("#flowsheetTable");
+
+    return isVisible(panel) || isVisible(flowsheet);
+  }
+
+  function currentPatientIdFilter() {
+    var pathHospitalizationId = hospitalizationIdFromPath();
+    var normalized = String(pathHospitalizationId || "").toLowerCase();
+    var result = {};
+
+    if (!normalized || !isPatientPageVisible()) {
+      return null;
+    }
+
+    result[normalized] = true;
+    return result;
+  }
+
+  function hasWhiteboardPatientSurface() {
+    return !!document.querySelector("#whiteboard-table, .tabs-container, #whiteboard-table-full");
+  }
+
+  function isControlledScheduleSurfaceReady() {
+    return !!visibleWhiteboardPatientIds() || isPatientPageVisible();
+  }
+
+  function readWhiteboardPatients() {
+    var scope = getWhiteboardScope();
+    var hospitalizations = readHospitalizationsFromScope(scope);
+    var patientScope = getPatientScope();
+    var visibleIds = visibleWhiteboardPatientIds() || currentPatientIdFilter();
+    var requiresVisibleSelection = !visibleIds && hasWhiteboardPatientSurface() && !isPatientPageVisible();
+    var patients = [];
+    var seen = {};
+
+    if (requiresVisibleSelection) {
+      return [];
+    }
+
+    if (!hospitalizations.length && patientScope && patientScope.hospitalization) {
+      hospitalizations = [patientScope.hospitalization];
+    }
+
+    hospitalizations.forEach(function (hospitalization) {
+      var patient = normalizePatientFromHospitalization(hospitalization);
+      var hospitalizationId = String(patient.hospitalizationId || "").toLowerCase();
+      var key = hospitalizationId || String(patient.name || "").toLowerCase();
+
+      if (!key || seen[key]) {
+        return;
+      }
+
+      if (visibleIds && (!hospitalizationId || !visibleIds[hospitalizationId])) {
+        return;
+      }
+
+      seen[key] = true;
+      patients.push(patient);
+    });
+
+    if (!patients.length && !visibleIds) {
+      var currentPatient = getPatientPanel();
+      if (currentPatient && currentPatient.name) {
+        patients.push({
+          hospitalizationId: currentPatient.hospitalizationId || hospitalizationIdFromPath(),
+          name: currentPatient.name || "",
+          ownerName: currentPatient.owner ? currentPatient.owner.displayName || "" : "",
+          ownerLastName: currentPatient.owner ? currentPatient.owner.lastName || "" : "",
+          cage: currentPatient.cage || "",
+          fileNumber: currentPatient.fileNumber || "",
+          customNumber: currentPatient.customNumber || "",
+          curFlowsheetId: currentPatient.flowsheetId || "",
+          flowsheetIds: currentPatient.flowsheetId ? [currentPatient.flowsheetId] : [],
+          flowsheets: patientScope && patientScope.flowsheet ? [patientScope.flowsheet] : []
+        });
+      }
+    }
+
+    return patients;
+  }
+
+  function findCachedFlowsheet(patient, flowsheetId) {
+    var target = String(flowsheetId || "").toLowerCase();
+
+    if (!target || !patient || !Array.isArray(patient.flowsheets)) {
+      return null;
+    }
+
+    for (var i = 0; i < patient.flowsheets.length; i++) {
+      var candidate = patient.flowsheets[i];
+      var candidateId = String(candidate && (candidate.flowsheetID || candidate.flowsheetId || candidate.id) || "").toLowerCase();
+
+      if (candidateId === target) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  function selectedFlowsheetIds(patient, maxFlowsheets) {
+    var ids = Array.isArray(patient.flowsheetIds) ? patient.flowsheetIds.slice() : [];
+    var currentId = patient.curFlowsheetId || "";
+    var currentIndex = -1;
+
+    if (!ids.length && currentId) {
+      ids = [currentId];
+    }
+
+    if (!ids.length) {
+      return [];
+    }
+
+    ids.some(function (id, index) {
+      if (String(id || "").toLowerCase() === String(currentId || "").toLowerCase()) {
+        currentIndex = index;
+        return true;
+      }
+
+      return false;
+    });
+
+    if (currentIndex < 0) {
+      currentIndex = 0;
+    }
+
+    return ids.slice(currentIndex, currentIndex + maxFlowsheets);
+  }
+
+  function canFetchFlowsheets() {
+    return typeof window.fetch === "function" && location.protocol !== "file:";
+  }
+
+  function fetchFlowsheetById(flowsheetId) {
+    var services = window.constants && window.constants.services ? window.constants.services : {};
+    var base = services.FLOWSHEET || "/api/v3/flowsheet/?id=";
+    var url = base + encodeURIComponent(flowsheetId);
+
+    return window.fetch(url, {
+      credentials: "same-origin"
+    }).then(function (response) {
+      if (!response.ok) {
+        throw new Error("Failed to load flowsheet " + flowsheetId + ": HTTP " + response.status);
+      }
+
+      return response.json();
+    }).then(function (payload) {
+      return payload && payload.flowsheet ? payload.flowsheet : payload;
+    });
+  }
+
+  function loadPatientFlowsheets(patient, options) {
+    options = options || {};
+
+    var maxFlowsheets = Math.max(1, Math.min(Number(options.maxFlowsheets) || 2, 4));
+    var ids = selectedFlowsheetIds(patient, maxFlowsheets);
+    var loaded = [];
+
+    if (!ids.length && Array.isArray(patient.flowsheets)) {
+      return Promise.resolve(patient.flowsheets.slice(0, maxFlowsheets));
+    }
+
+    return Promise.all(ids.map(function (flowsheetId) {
+      var cached = findCachedFlowsheet(patient, flowsheetId);
+
+      if (cached) {
+        return cached;
+      }
+
+      if (!canFetchFlowsheets()) {
+        return null;
+      }
+
+      return fetchFlowsheetById(flowsheetId).catch(function () {
+        return null;
+      });
+    })).then(function (flowsheets) {
+      flowsheets.forEach(function (flowsheet) {
+        if (flowsheet) {
+          loaded.push(flowsheet);
+        }
+      });
+
+      return loaded;
+    });
+  }
+
+  function medicationParametersFromFlowsheet(flowsheet) {
+    var medications = [];
+    var seen = {};
+
+    function add(parameter) {
+      if (!parameter) {
+        return;
+      }
+
+      var key = [
+        parameter.parameterBaseID,
+        parameter.parameterBaseTypeID,
+        parameter.inHospParameterID,
+        parameter.localInventoryItemID,
+        parameter.nameFull,
+        parameter.name
+      ].join("|");
+
+      if (seen[key]) {
+        return;
+      }
+
+      seen[key] = true;
+      medications.push(parameter);
+    }
+
+    if (!flowsheet) {
+      return medications;
+    }
+
+    if (Array.isArray(flowsheet.medications)) {
+      flowsheet.medications.forEach(add);
+    }
+
+    if (Array.isArray(flowsheet.parameters)) {
+      flowsheet.parameters.forEach(function (parameter) {
+        var section = parameter && firstValue([parameter.parameterSection, parameter.parameterType]);
+        var normalizedSection = String(section || "").toLowerCase();
+
+        if (parameter && (Number(section) === 4 || normalizedSection === "medications" || normalizedSection === "medication")) {
+          add(parameter);
+        }
+      });
+    }
+
+    return medications;
+  }
+
+  function parameterTreatment(parameter) {
+    var name = cleanText(stripHtml(firstValue([
+      parameter.NameHtml,
+      parameter.nameHtml,
+      parameter.nameFull,
+      parameter.name,
+      parameter.Name,
+      parameter.label
+    ])));
+    var prescription = cleanText(stripHtml(firstValue([
+      parameter.PrescriptionHtml,
+      parameter.prescriptionHtml,
+      parameter.Prescription,
+      parameter.prescription
+    ])));
+
+    return {
+      name: name,
+      prescription: prescription,
+      label: [name, prescription].filter(Boolean).join(" ")
+    };
+  }
+
+  function plannedValuesForParameter(parameter) {
+    if (!parameter || !Array.isArray(parameter.values)) {
+      return [];
+    }
+
+    return parameter.values.filter(function (value) {
+      if (!value || value.deleted) {
+        return false;
+      }
+
+      return value.st == 1 || value.status == 1;
+    }).sort(function (a, b) {
+      var aDate = parseDateLike(a.date || a.Date || a.datePlanned || a.DatePlanned);
+      var bDate = parseDateLike(b.date || b.Date || b.datePlanned || b.DatePlanned);
+
+      return (aDate ? aDate.getTime() : 0) - (bDate ? bDate.getTime() : 0);
+    });
+  }
+
+  function floorToHour(date) {
+    var result = new Date(date.getTime());
+    result.setMinutes(0, 0, 0);
+    return result;
+  }
+
+  function scheduleDateKey(date) {
+    return [
+      date.getFullYear(),
+      pad2(date.getMonth() + 1),
+      pad2(date.getDate())
+    ].join("-");
+  }
+
+  function scheduleHourKey(date) {
+    return scheduleDateKey(date) + "T" + pad2(date.getHours());
+  }
+
+  function textNumber(value) {
+    if (value === null || value === undefined || value === "") {
+      return "";
+    }
+
+    var number = Number(value);
+
+    if (!Number.isFinite(number)) {
+      return String(value).trim();
+    }
+
+    return String(Math.round(number * 10000) / 10000);
+  }
+
+  function amountText(value, unit) {
+    var numberText = textNumber(value);
+    var unitText = cleanText(unit);
+
+    if (!numberText) {
+      return "";
+    }
+
+    return [numberText, unitText].filter(Boolean).join(" ");
+  }
+
+  function concentrationText(parameter) {
+    var concentration = firstValue([parameter.concentration, parameter.Concentration]);
+    var amountUnit = firstValue([
+      parameter.concentrationMeasureTypeAsString,
+      parameter.ConcentrationMeasureTypeAsString,
+      parameter.doseMeasureTypeAsString
+    ]);
+    var volumeUnit = firstValue([
+      parameter.concentrationVolumeTypeAsString,
+      parameter.ConcentrationVolumeTypeAsString
+    ]);
+    var numberText = textNumber(concentration);
+
+    if (!numberText) {
+      return "";
+    }
+
+    if (amountUnit && volumeUnit) {
+      return numberText + " " + amountUnit + "/" + volumeUnit;
+    }
+
+    return [numberText, amountUnit].filter(Boolean).join(" ");
+  }
+
+  function doseAmountText(parameter) {
+    var volumeDose = firstValue([
+      parameter.totalDoseOnConcentration,
+      parameter.TotalDoseOnConcentration,
+      parameter.totalVolume,
+      parameter.volume
+    ]);
+    var volumeUnit = firstValue([
+      parameter.concentrationVolumeTypeAsString,
+      parameter.ConcentrationVolumeTypeAsString,
+      parameter.doseVolumeTypeAsString
+    ]);
+    var totalDose = firstValue([parameter.totalDose, parameter.TotalDose]);
+    var totalDoseUnit = firstValue([
+      parameter.concentrationMeasureTypeAsString,
+      parameter.ConcentrationMeasureTypeAsString,
+      parameter.doseMeasureTypeAsString
+    ]);
+
+    return amountText(volumeDose, volumeUnit) || amountText(totalDose, totalDoseUnit);
+  }
+
+  function medicationRoute(parameter) {
+    return cleanText(firstValue([
+      parameter.routeTypeAsString,
+      parameter.RouteTypeAsString,
+      parameter.route,
+      parameter.routeName
+    ]));
+  }
+
+  function medicationFrequency(parameter) {
+    var frequency = Number(firstValue([parameter.frequency, parameter.Frequency]));
+
+    if (!Number.isFinite(frequency) || frequency <= 0) {
+      return "";
+    }
+
+    return "q" + textNumber(frequency) + "h";
+  }
+
+  function medicationDisplayDetails(parameter) {
+    var dose = doseAmountText(parameter);
+    var prescription = cleanText(stripHtml(firstValue([
+      parameter.PrescriptionHtml,
+      parameter.prescriptionHtml,
+      parameter.Prescription,
+      parameter.prescription
+    ])));
+
+    return {
+      concentration: concentrationText(parameter),
+      dose: dose || prescription,
+      route: medicationRoute(parameter),
+      frequency: medicationFrequency(parameter)
+    };
+  }
+
+  function formatScheduleDate(date) {
+    return [
+      pad2(date.getMonth() + 1),
+      pad2(date.getDate()),
+      date.getFullYear()
+    ].join("/");
+  }
+
+  function formatScheduleHour(date) {
+    return formatTime(date.toISOString(), "");
+  }
+
+  function controlledMedicationLine(event) {
+    var patient = event.patient || {};
+    var details = [
+      event.medicationLabel,
+      event.dose,
+      event.route
+    ].filter(Boolean);
+
+    return "- " + [
+      patient.name || "Unknown patient",
+      patient.customNumber || "--",
+      details.join(", ")
+    ].filter(Boolean).join(", ");
+  }
+
+  function addControlledEventsForFlowsheet(patient, flowsheet, startTime, endTime, events) {
+    var tools = getControlledMedicationTools();
+    var medications = medicationParametersFromFlowsheet(flowsheet);
+
+    medications.forEach(function (parameter) {
+      var treatment = parameterTreatment(parameter);
+      var controlledMedication = tools.findControlledMedication(treatment.label);
+
+      if (!controlledMedication) {
+        return;
+      }
+
+      var details = medicationDisplayDetails(parameter);
+
+      plannedValuesForParameter(parameter).forEach(function (value) {
+        var dueDate = parseDateLike(value.date || value.Date || value.datePlanned || value.DatePlanned);
+        var bucketDate = dueDate ? floorToHour(dueDate) : null;
+
+        if (!dueDate || dueDate < startTime || dueDate >= endTime) {
+          return;
+        }
+
+        events.push({
+          patient: {
+            hospitalizationId: patient.hospitalizationId || "",
+            name: patient.name || "",
+            ownerName: patient.ownerName || "",
+            ownerLastName: patient.ownerLastName || "",
+            customNumber: patient.customNumber || "",
+            fileNumber: patient.fileNumber || ""
+          },
+          medicationId: controlledMedication.id,
+          medicationName: controlledMedication.label,
+          medicationLabel: treatment.name || controlledMedication.label,
+          prescription: treatment.prescription,
+          concentration: details.concentration,
+          dose: details.dose,
+          route: details.route,
+          frequency: details.frequency,
+          dueAt: dueDate.toISOString(),
+          bucketKey: scheduleHourKey(bucketDate),
+          dateLabel: formatScheduleDate(bucketDate),
+          timeLabel: formatScheduleHour(bucketDate),
+          sortTime: dueDate.getTime()
+        });
+      });
+    });
+  }
+
+  function readVisibleControlledEvents(startTime, endTime) {
+    var flowsheet = readFlowsheetTable();
+    var patient = getPatientPanel();
+    var tools = getControlledMedicationTools();
+    var seenRows = {};
+    var events = [];
+
+    if (!flowsheet || !patient) {
+      return events;
+    }
+
+    flowsheet.entries.forEach(function (entry) {
+      var dueDate = parseDateLike(entry.recordedAt);
+      var bucketDate = dueDate ? floorToHour(dueDate) : null;
+      var match = tools.findControlledMedication([entry.treatment, entry.treatmentName, entry.prescription].join(" "));
+      var key = [
+        entry.treatment,
+        entry.prescription,
+        entry.recordedAt,
+        entry.columnIndex
+      ].join("|");
+
+      if (!match || !entry.state.planned || !dueDate || dueDate < startTime || dueDate >= endTime || seenRows[key]) {
+        return;
+      }
+
+      seenRows[key] = true;
+      events.push({
+        patient: {
+          hospitalizationId: patient.hospitalizationId || "",
+          name: patient.name || "",
+          ownerName: patient.owner ? patient.owner.displayName || "" : "",
+          ownerLastName: patient.owner ? patient.owner.lastName || "" : "",
+          customNumber: patient.customNumber || "",
+          fileNumber: patient.fileNumber || ""
+        },
+        medicationId: match.id,
+        medicationName: match.label,
+        medicationLabel: entry.treatmentName || match.label,
+        prescription: entry.prescription || "",
+        concentration: "",
+        dose: entry.prescription || "",
+        route: "",
+        frequency: "",
+        dueAt: dueDate.toISOString(),
+        bucketKey: scheduleHourKey(bucketDate),
+        dateLabel: formatScheduleDate(bucketDate),
+        timeLabel: formatScheduleHour(bucketDate),
+        sortTime: dueDate.getTime()
+      });
+    });
+
+    return events;
+  }
+
+  function uniqueControlledEvents(events) {
+    var seen = {};
+
+    return events.filter(function (event) {
+      var key = [
+        event.patient.hospitalizationId,
+        event.patient.name,
+        event.medicationLabel,
+        event.prescription,
+        event.dueAt
+      ].join("|").toLowerCase();
+
+      if (seen[key]) {
+        return false;
+      }
+
+      seen[key] = true;
+      return true;
+    }).sort(function (a, b) {
+      if (a.sortTime !== b.sortTime) {
+        return a.sortTime - b.sortTime;
+      }
+
+      return controlledMedicationLine(a).localeCompare(controlledMedicationLine(b));
+    });
+  }
+
+  function patientDisplayLine(patient) {
+    patient = patient || {};
+
+    return "- " + [
+      patient.name || "Unknown patient",
+      patient.ownerLastName || patient.ownerName || "",
+      patient.customNumber || "--"
+    ].filter(Boolean).join(", ");
+  }
+
+  function medicationDisplayLine(event) {
+    var details = [
+      event.medicationLabel || event.medicationName || "Medication",
+      event.dose,
+      event.route
+    ].filter(Boolean);
+
+    return "  - " + details.join(", ");
+  }
+
+  function patientGroupKey(patient) {
+    patient = patient || {};
+
+    return [
+      patient.hospitalizationId,
+      patient.name,
+      patient.ownerLastName || patient.ownerName,
+      patient.customNumber
+    ].join("|").toLowerCase();
+  }
+
+  function buildScheduleBuckets(startTime, horizonHours) {
+    var buckets = [];
+
+    for (var i = 0; i < horizonHours; i++) {
+      var bucketDate = new Date(startTime.getTime() + i * 60 * 60 * 1000);
+      buckets.push({
+        key: scheduleHourKey(bucketDate),
+        dateLabel: formatScheduleDate(bucketDate),
+        timeLabel: formatScheduleHour(bucketDate),
+        events: []
+      });
+    }
+
+    return buckets;
+  }
+
+  function formatControlledSchedule(buckets) {
+    var output = [];
+
+    buckets.forEach(function (bucket) {
+      var patientGroups = [];
+      var patientMap = {};
+
+      if (!bucket.events.length) {
+        return;
+      }
+
+      if (output.length) {
+        output.push("");
+      }
+
+      output.push(bucket.timeLabel + ":");
+
+      bucket.events.forEach(function (event) {
+        var key = patientGroupKey(event.patient);
+
+        if (!patientMap[key]) {
+          patientMap[key] = {
+            patient: event.patient,
+            events: []
+          };
+          patientGroups.push(patientMap[key]);
+        }
+
+        patientMap[key].events.push(event);
+      });
+
+      patientGroups.forEach(function (group) {
+        output.push(patientDisplayLine(group.patient));
+        group.events.forEach(function (event) {
+          output.push(medicationDisplayLine(event));
+        });
+      });
+    });
+
+    return output.join("\n");
+  }
+
+  function summarizeControlledSchedule(patients, events, startTime, horizonHours, source) {
+    var buckets = buildScheduleBuckets(startTime, horizonHours);
+    var bucketMap = {};
+
+    buckets.forEach(function (bucket) {
+      bucketMap[bucket.key] = bucket;
+    });
+
+    uniqueControlledEvents(events).forEach(function (event) {
+      if (bucketMap[event.bucketKey]) {
+        bucketMap[event.bucketKey].events.push(event);
+      }
+    });
+
+    return {
+      source: source,
+      generatedAt: new Date().toISOString(),
+      startAt: startTime.toISOString(),
+      horizonHours: horizonHours,
+      patientCount: patients.length,
+      patients: patients.map(function (patient) {
+        return {
+          hospitalizationId: patient.hospitalizationId || "",
+          name: patient.name || "",
+          ownerName: patient.ownerName || "",
+          ownerLastName: patient.ownerLastName || "",
+          customNumber: patient.customNumber || "",
+          fileNumber: patient.fileNumber || ""
+        };
+      }),
+      events: uniqueControlledEvents(events),
+      buckets: buckets,
+      formattedText: formatControlledSchedule(buckets)
+    };
+  }
+
+  function getControlledMedicationSchedule(options) {
+    options = options || {};
+
+    var now = parseDateLike(options.now) || new Date();
+    var horizonHours = Math.max(1, Math.min(Number(options.horizonHours) || 12, 48));
+    var startTime = floorToHour(now);
+    var endTime = new Date(startTime.getTime() + horizonHours * 60 * 60 * 1000);
+    var allEvents = [];
+
+    if (!isControlledScheduleSurfaceReady()) {
+      return summarizeControlledSchedule([], [], startTime, horizonHours, "not-ready");
+    }
+
+    var patients = readWhiteboardPatients();
+
+    if (!patients.length) {
+      return summarizeControlledSchedule([], [], startTime, horizonHours, "none");
+    }
+
+    return Promise.all(patients.map(function (patient) {
+      return loadPatientFlowsheets(patient, options).then(function (flowsheets) {
+        flowsheets.forEach(function (flowsheet) {
+          addControlledEventsForFlowsheet(patient, flowsheet, startTime, endTime, allEvents);
+        });
+      });
+    })).then(function () {
+      var visibleEvents = readVisibleControlledEvents(startTime, endTime);
+      var source = allEvents.length ? "whiteboard-flowsheets" : "visible-flowsheet";
+
+      return summarizeControlledSchedule(
+        patients,
+        allEvents.concat(visibleEvents),
+        startTime,
+        horizonHours,
+        source
+      );
+    });
+  }
+
   function getFluidRateSummary(targetInput) {
     var patient = getPatientPanel();
     var weightKg = getPatientWeightKg(patient);
     var species = patient && patient.species ? patient.species.normalized : null;
-    var multiplier = maintenanceMultiplier(species);
+    var maintenance = maintenanceSettings(species, targetInput && targetInput.maintenanceMode);
     var target = parseFluidTarget(targetInput);
     var maintenanceMlDay = null;
     var maintenanceMlHour = null;
     var targetMlDay = null;
     var targetMlHour = null;
 
-    if (typeof weightKg === "number" && weightKg > 0 && multiplier) {
-      maintenanceMlDay = multiplier * Math.pow(weightKg, 0.75);
+    if (typeof weightKg === "number" && weightKg > 0 && maintenance.mode === "bodyWeight" && maintenance.multiplier) {
+      maintenanceMlDay = maintenance.multiplier * Math.pow(weightKg, maintenance.exponent);
+      maintenanceMlHour = maintenanceMlDay / 24;
+    } else if (typeof weightKg === "number" && weightKg > 0 && maintenance.mlPerKgDay) {
+      maintenanceMlDay = weightKg * maintenance.mlPerKgDay;
       maintenanceMlHour = maintenanceMlDay / 24;
     }
 
@@ -1004,7 +1905,8 @@
       maintenance: {
         available: maintenanceMlDay !== null,
         species: species,
-        formula: multiplier ? multiplier + " * kg^0.75" : "",
+        mode: maintenance.mode,
+        formula: maintenance.formula,
         mlPerDay: maintenanceMlDay,
         mlPerHour: maintenanceMlHour,
         mlPerDayText: maintenanceMlDay === null ? "" : fluidRatePrecision(maintenanceMlDay) + " mL/day",
@@ -1621,6 +2523,7 @@
     getBloodPressureResults: getBloodPressureResults,
     formatBloodPressureResults: formatBloodPressureResults,
     getFluidRateSummary: getFluidRateSummary,
+    getControlledMedicationSchedule: getControlledMedicationSchedule,
     getTechNotes: getTechNotes,
     formatTechNotes: formatTechNotes,
     getTechNotesSummary: getTechNotesSummary,

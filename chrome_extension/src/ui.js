@@ -3,6 +3,8 @@
 
   var ROOT_ID = "sf-helper-root";
   var OPEN_CLASS = "sf-helper-open";
+  var layoutFrame = null;
+  var layoutSecondPassFrame = null;
   var state = {
     activeTab: "vitals",
     bloodGlucose: {
@@ -14,6 +16,7 @@
       formattedText: ""
     },
     fluids: {
+      maintenanceMode: "default",
       targetMlKgDay: 90,
       targetMlKgHour: 90 / 24,
       targetMode: "day",
@@ -25,6 +28,15 @@
       patientKey: "",
       loaded: false,
       loading: false,
+      requestSeq: 0
+    },
+    controlled: {
+      events: [],
+      formattedText: "",
+      loading: false,
+      patientCount: 0,
+      source: "",
+      updatedAt: "",
       requestSeq: 0
     }
   };
@@ -49,6 +61,35 @@
     }
 
     return element;
+  }
+
+  function applyHelperPlacement() {
+    var layout = window.SmartFlowHelperLayout;
+    var root = document.getElementById(ROOT_ID);
+
+    if (!layout || !root || typeof layout.apply !== "function") {
+      return;
+    }
+
+    layout.apply(root);
+
+    if (root.classList.contains(OPEN_CLASS) && !layoutSecondPassFrame) {
+      layoutSecondPassFrame = window.requestAnimationFrame(function () {
+        layoutSecondPassFrame = null;
+        layout.apply(root);
+      });
+    }
+  }
+
+  function scheduleHelperPlacement() {
+    if (layoutFrame) {
+      return;
+    }
+
+    layoutFrame = window.requestAnimationFrame(function () {
+      layoutFrame = null;
+      applyHelperPlacement();
+    });
   }
 
   function getBridge() {
@@ -80,6 +121,28 @@
     if (element) {
       element.textContent = text || "";
     }
+  }
+
+  function formatDateTime(value) {
+    var date = value ? new Date(value) : null;
+
+    if (!date || !Number.isFinite(date.getTime())) {
+      return "";
+    }
+
+    return date.toLocaleString(undefined, {
+      month: "numeric",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    });
+  }
+
+  function controlledStatusText() {
+    var updatedAt = formatDateTime(state.controlled.updatedAt);
+
+    return "Last updated: " + (updatedAt || "never");
   }
 
   function copyText(text) {
@@ -343,6 +406,12 @@
   function handleLocationChange() {
     var patientKey = syncNotesPatientKey();
 
+    scheduleHelperPlacement();
+
+    if (state.activeTab === "controlled") {
+      setStatus(controlledStatusText(), false);
+    }
+
     if (patientKey) {
       preloadNotesForCurrentPatient();
     }
@@ -391,6 +460,89 @@
     });
   }
 
+  function renderControlled(summary) {
+    if (summary) {
+      state.controlled.events = summary.events || [];
+      state.controlled.formattedText = summary.formattedText || "";
+      state.controlled.patientCount = Number(summary.patientCount) || 0;
+      state.controlled.source = summary.source || "";
+      state.controlled.updatedAt = summary.generatedAt || new Date().toISOString();
+    }
+
+    var output = document.querySelector("#sf-helper-controlled-output");
+    var refreshButton = document.querySelector("#sf-helper-controlled-refresh");
+    var copyButton = document.querySelector("#sf-helper-controlled-copy");
+    var count = document.querySelector("#sf-helper-controlled-count");
+
+    if (output) {
+      output.value = state.controlled.loading ? "Loading..." : state.controlled.formattedText;
+    }
+
+    if (refreshButton) {
+      refreshButton.disabled = !!state.controlled.loading;
+    }
+
+    if (copyButton) {
+      copyButton.disabled = !!state.controlled.loading || !state.controlled.formattedText;
+    }
+
+    if (count) {
+      count.textContent = state.controlled.loading ?
+        "Loading..." :
+        state.controlled.events.length + (state.controlled.events.length === 1 ? " due" : " due");
+    }
+  }
+
+  function refreshControlled(options) {
+    options = options || {};
+
+    var requestSeq = ++state.controlled.requestSeq;
+
+    state.controlled.loading = true;
+
+    renderControlled();
+    setStatus("Reading controlled meds...", false);
+
+    return helperCall("getControlledMedicationSchedule", [{
+      horizonHours: 12
+    }], 30000).then(function (summary) {
+      if (requestSeq !== state.controlled.requestSeq) {
+        return null;
+      }
+
+      state.controlled.loading = false;
+
+      if (summary && summary.source === "not-ready") {
+        renderControlled();
+        setStatus("Whiteboard or patient page is not visible yet. " + controlledStatusText(), true);
+        return summary;
+      }
+
+      renderControlled(summary);
+      setStatus(controlledStatusText(), false);
+
+      return summary;
+    }).catch(function (error) {
+      if (requestSeq !== state.controlled.requestSeq) {
+        return null;
+      }
+
+      state.controlled.loading = false;
+      renderControlled();
+      setStatus(error && error.message ? error.message : String(error), true);
+
+      return null;
+    });
+  }
+
+  function copyControlledSchedule() {
+    copyText(state.controlled.formattedText).then(function () {
+      setStatus("Copied controlled meds.", false);
+    }).catch(function (error) {
+      setStatus(error && error.message ? error.message : String(error), true);
+    });
+  }
+
   function speciesText(summary) {
     var species = summary && summary.patient && summary.patient.species;
     var normalized = species && species.normalized;
@@ -433,6 +585,8 @@
     var mode = state.fluids.targetMode;
     var mlKgDay = readPositiveNumber("#sf-helper-fluid-target-day", state.fluids.targetMlKgDay);
     var mlKgHour = readPositiveNumber("#sf-helper-fluid-target-hour", state.fluids.targetMlKgHour);
+    var maintenanceModeInput = document.querySelector("input[name='sf-helper-maintenance-mode']:checked");
+    var maintenanceMode = maintenanceModeInput ? maintenanceModeInput.value : state.fluids.maintenanceMode;
 
     if (document.activeElement && document.activeElement.id === "sf-helper-fluid-target-hour") {
       mode = "hour";
@@ -441,6 +595,7 @@
     }
 
     return {
+      maintenanceMode: maintenanceMode === "bodyWeight" ? "bodyWeight" : "default",
       mode: mode,
       mlKgDay: mlKgDay,
       mlKgHour: mlKgHour
@@ -454,6 +609,9 @@
     var hourInput = document.querySelector("#sf-helper-fluid-target-hour");
 
     if (summary && summary.target) {
+      state.fluids.maintenanceMode = summary.maintenance && summary.maintenance.mode ?
+        summary.maintenance.mode :
+        state.fluids.maintenanceMode;
       state.fluids.targetMlKgDay = summary.target.mlPerKgDay;
       state.fluids.targetMlKgHour = summary.target.mlPerKgHour;
       state.fluids.targetMode = summary.target.mode || state.fluids.targetMode;
@@ -506,6 +664,7 @@
     state.fluids.targetMlKgDay = target.mlKgDay;
     state.fluids.targetMlKgHour = target.mlKgHour;
     state.fluids.targetMode = target.mode;
+    state.fluids.maintenanceMode = target.maintenanceMode;
     setStatus("Reading patient details...", false);
 
     return helperCall("getFluidRateSummary", [target]).then(function (summary) {
@@ -587,6 +746,42 @@
     return row;
   }
 
+  function buildMaintenanceModeOption(value, title, detail) {
+    var label = createElement("label", { className: "sf-helper-radio-option" });
+    var input = createElement("input", {
+      attrs: {
+        type: "radio",
+        name: "sf-helper-maintenance-mode",
+        value: value
+      }
+    });
+
+    if (state.fluids.maintenanceMode === value) {
+      input.checked = true;
+    }
+
+    input.addEventListener("change", function () {
+      if (!input.checked) {
+        return;
+      }
+
+      state.fluids.maintenanceMode = value;
+      refreshFluids();
+    });
+
+    label.appendChild(input);
+    label.appendChild(createElement("span", {
+      className: "sf-helper-radio-label",
+      text: title
+    }));
+    label.appendChild(createElement("span", {
+      className: "sf-helper-radio-detail",
+      text: detail
+    }));
+
+    return label;
+  }
+
   function buildVitalsPanel() {
     var panel = createElement("div", {
       className: "sf-helper-tab-panel",
@@ -617,6 +812,13 @@
     });
     var grid = createElement("div", { className: "sf-helper-fluid-grid" });
     var maintenance = createElement("section", { className: "sf-helper-pane" });
+    var maintenanceMode = createElement("div", {
+      className: "sf-helper-radio-group",
+      attrs: {
+        role: "radiogroup",
+        "aria-label": "Maintenance formula"
+      }
+    });
     var target = createElement("section", { className: "sf-helper-pane" });
     var targetDayField = createElement("label", { className: "sf-helper-field" });
     var targetHourField = createElement("label", { className: "sf-helper-field" });
@@ -645,6 +847,9 @@
       className: "sf-helper-pane-title",
       text: "Maintenance"
     }));
+    maintenanceMode.appendChild(buildMaintenanceModeOption("default", "Default maintenance", "Dog 60 mL/kg/day; Cat 40 mL/kg/day"));
+    maintenanceMode.appendChild(buildMaintenanceModeOption("bodyWeight", "Body weight based", "Dog 132 * BW(kg)^0.75; Cat 80 * BW(kg)^0.75"));
+    maintenance.appendChild(maintenanceMode);
     maintenance.appendChild(buildRateRow("Weight", "sf-helper-fluid-weight"));
     maintenance.appendChild(buildRateRow("Species", "sf-helper-fluid-species"));
     maintenance.appendChild(buildRateRow("mL/day", "sf-helper-maintenance-day"));
@@ -741,13 +946,95 @@
     return panel;
   }
 
-  function refreshActiveTab() {
+  function buildControlledPanel() {
+    var panel = createElement("div", {
+      className: "sf-helper-tab-panel",
+      attrs: {
+        id: "sf-helper-panel-controlled",
+        role: "tabpanel",
+        "data-sf-helper-panel": "controlled",
+        hidden: "hidden"
+      }
+    });
+    var pane = createElement("section", { className: "sf-helper-pane sf-helper-controlled-pane" });
+    var header = createElement("div", { className: "sf-helper-pane-header" });
+    var output = createElement("textarea", {
+      className: "sf-helper-output sf-helper-controlled-output",
+      attrs: {
+        id: "sf-helper-controlled-output",
+        spellcheck: "false",
+        readonly: "readonly"
+      }
+    });
+    var actions = createElement("div", { className: "sf-helper-pane-actions" });
+    var refreshButton = createElement("button", {
+      className: "sf-helper-button",
+      text: "Refresh",
+      attrs: {
+        id: "sf-helper-controlled-refresh",
+        type: "button"
+      }
+    });
+    var copyButton = createElement("button", {
+      className: "sf-helper-button sf-helper-button-primary",
+      text: "Copy",
+      attrs: {
+        id: "sf-helper-controlled-copy",
+        type: "button",
+        disabled: "disabled"
+      }
+    });
+
+    header.appendChild(createElement("h2", {
+      className: "sf-helper-pane-title",
+      text: "Controlled Meds"
+    }));
+    header.appendChild(createElement("div", {
+      className: "sf-helper-count",
+      attrs: {
+        id: "sf-helper-controlled-count"
+      },
+      text: "0 due"
+    }));
+
+    refreshButton.addEventListener("click", function () {
+      refreshControlled({
+        force: true
+      });
+    });
+    copyButton.addEventListener("click", copyControlledSchedule);
+
+    actions.appendChild(refreshButton);
+    actions.appendChild(copyButton);
+    pane.appendChild(header);
+    pane.appendChild(output);
+    pane.appendChild(actions);
+    panel.appendChild(pane);
+
+    return panel;
+  }
+
+  function refreshActiveTab(options) {
+    options = options || {};
+
     if (state.activeTab === "fluids") {
       return refreshFluids();
     }
 
     if (state.activeTab === "notes") {
       return forceRefreshNotesForCurrentPatient(false);
+    }
+
+    if (state.activeTab === "controlled") {
+      if (options.manual) {
+        return refreshControlled({
+          force: true
+        });
+      }
+
+      renderControlled();
+      setStatus(controlledStatusText(), false);
+      return Promise.resolve(null);
     }
 
     return refreshVitals();
@@ -855,7 +1142,7 @@
     tabs.appendChild(buildTab("vitals", "Vitals", true, false));
     tabs.appendChild(buildTab("fluids", "Fluids", false, false));
     tabs.appendChild(buildTab("notes", "Notes", false, false));
-    tabs.appendChild(buildTab("tab4", "Tab 4", false, true));
+    tabs.appendChild(buildTab("controlled", "Controlled", false, false));
 
     var body = createElement("div", { className: "sf-helper-body" });
 
@@ -870,6 +1157,7 @@
     body.appendChild(buildVitalsPanel());
     body.appendChild(buildFluidsPanel());
     body.appendChild(buildNotesPanel());
+    body.appendChild(buildControlledPanel());
     body.appendChild(status);
 
     panel.appendChild(header);
@@ -880,15 +1168,19 @@
 
     launcher.addEventListener("click", function () {
       root.classList.add(OPEN_CLASS);
+      scheduleHelperPlacement();
       refreshActiveTab();
     });
 
     closeButton.addEventListener("click", function () {
       root.classList.remove(OPEN_CLASS);
+      scheduleHelperPlacement();
     });
 
     refreshButton.addEventListener("click", function () {
-      refreshActiveTab();
+      refreshActiveTab({
+        manual: true
+      });
     });
 
     return root;
@@ -900,6 +1192,9 @@
     }
 
     document.documentElement.appendChild(buildPanel());
+    applyHelperPlacement();
+    window.addEventListener("resize", scheduleHelperPlacement);
+    window.addEventListener("scroll", scheduleHelperPlacement, true);
     watchPatientNavigation();
     watchSmartFlowNotesOpen();
     handleLocationChange();

@@ -12,6 +12,7 @@
       ],
       "js": [
         "src/value-parsers.js",
+        "src/controlled-medications.js",
         "src/smartflow-reader.js"
       ],
       "run_at": "document_idle",
@@ -27,7 +28,9 @@
         "src/ui.css"
       ],
       "js": [
+        "src/controlled-medications.js",
         "src/content-bridge.js",
+        "src/ui-layout.js",
         "src/ui.js"
       ],
       "run_at": "document_idle"

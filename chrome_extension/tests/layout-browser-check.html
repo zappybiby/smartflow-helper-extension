@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Smart Flow Helper Layout Check</title>
+  <link rel="stylesheet" href="../src/ui.css">
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      background: #f8f9fa;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    .bug-panel {
+      position: fixed;
+      left: 0;
+      top: 273px;
+      width: 50px;
+      height: 106px;
+      background: #079bd3;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      z-index: 50;
+    }
+
+    #flowsheetTable {
+      position: fixed;
+      left: 510px;
+      top: 404px;
+      width: 1000px;
+      height: 496px;
+      border-collapse: collapse;
+      table-layout: fixed;
+      background: #ffffff;
+    }
+
+    #flowsheetTable td {
+      width: 40px;
+      height: 28px;
+      border: 1px solid #cfcfcf;
+      background: #f7f7f7;
+    }
+
+    #flowsheetTable tr:nth-child(4n) td:nth-child(6n) {
+      background: #ffff00;
+    }
+  </style>
+</head>
+<body>
+  <div class="bug-panel"></div>
+  <table id="flowsheetTable">
+    <tbody id="fixture-flowsheet-body"></tbody>
+  </table>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var body = document.getElementById("fixture-flowsheet-body");
+
+      Array.from({ length: 14 }).forEach(function (_, rowIndex) {
+        var row = document.createElement("tr");
+
+        Array.from({ length: 24 }).forEach(function (_, colIndex) {
+          var cell = document.createElement("td");
+          cell.textContent = rowIndex === 0 ? String(colIndex + 1) : "";
+          row.appendChild(cell);
+        });
+
+        body.appendChild(row);
+      });
+
+      window.SmartFlowHelperBridge = {
+        callPageHelper: function (method) {
+          if (method.indexOf("format") === 0) {
+            return Promise.resolve("");
+          }
+
+          if (method === "getFluidRateSummary") {
+            return Promise.resolve({
+              patient: {
+                weightKgText: "27.8 kg",
+                weight: {
+                  text: "27.8 kg"
+                },
+                species: {
+                  normalized: "dog"
+                }
+              },
+              maintenance: {
+                mlPerDayText: "1668 mL/day",
+                mlPerHourText: "70 mL/hr",
+                formula: "60 mL/kg/day",
+                mode: "default"
+              },
+              target: {
+                mlPerKgDay: 90,
+                mlPerKgHour: 3.75,
+                mode: "day",
+                mlPerKgDayText: "90 mL/kg/day",
+                mlPerKgHourText: "3.8 mL/kg/hr",
+                mlPerDayText: "2502 mL/day",
+                mlPerHourText: "104 mL/hr"
+              }
+            });
+          }
+
+          return Promise.resolve([]);
+        }
+      };
+    })();
+  </script>
+  <script src="../src/ui-layout.js"></script>
+  <script src="../src/ui.js"></script>
+</body>
+</html>
