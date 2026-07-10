@@ -65,6 +65,7 @@
   ];
 
   var DEFAULT_EXCLUDED_TERMS = [
+    "cri",
     "dexmedetomidine",
     "dexmed"
   ];
