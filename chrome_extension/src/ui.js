@@ -753,22 +753,49 @@
       setElementText("#sf-helper-fluid-species", "Unavailable");
       setElementText("#sf-helper-maintenance-day", "");
       setElementText("#sf-helper-maintenance-hour", "");
-      setElementText("#sf-helper-maintenance-formula", "");
-      setElementText("#sf-helper-target-day-rate", "");
-      setElementText("#sf-helper-target-hour-rate", "");
+      setElementText("#sf-helper-maintenance-calculation", "");
+      setElementText("#sf-helper-target-calculation", "");
       setElementText("#sf-helper-target-day", "");
       setElementText("#sf-helper-target-hour", "");
       setStatus("Patient details unavailable.", true);
       return;
     }
 
-    setElementText("#sf-helper-fluid-weight", summary.patient.weightKgText || summary.patient.weight.text || "Unavailable");
+    var weightText = summary.patient.weightKgText || summary.patient.weight.text || "Unavailable";
+    var maintenanceFormula = summary.maintenance.formula || "";
+    var maintenanceCalculation = "";
+    var primaryTargetRate = summary.target.mode === "hour" ?
+      summary.target.mlPerKgHourText :
+      summary.target.mlPerKgDayText;
+    var equivalentTargetRate = summary.target.mode === "hour" ?
+      summary.target.mlPerKgDayText :
+      summary.target.mlPerKgHourText;
+    var targetCalculation = "";
+
+    if (maintenanceFormula && weightText !== "Unavailable") {
+      if (maintenanceFormula.indexOf("BW(kg)") !== -1) {
+        maintenanceCalculation = maintenanceFormula
+          .replace("BW(kg)", "(" + weightText + ")")
+          .replace(" * ", " × ");
+      } else {
+        maintenanceCalculation = weightText + " × " + maintenanceFormula;
+      }
+    }
+
+    if (primaryTargetRate && weightText !== "Unavailable") {
+      targetCalculation = weightText + " × " + primaryTargetRate;
+
+      if (equivalentTargetRate) {
+        targetCalculation += " · equivalent to " + equivalentTargetRate;
+      }
+    }
+
+    setElementText("#sf-helper-fluid-weight", weightText);
     setElementText("#sf-helper-fluid-species", speciesText(summary) || "Unavailable");
     setElementText("#sf-helper-maintenance-day", summary.maintenance.mlPerDayText || "");
     setElementText("#sf-helper-maintenance-hour", summary.maintenance.mlPerHourText || "");
-    setElementText("#sf-helper-maintenance-formula", summary.maintenance.formula || "");
-    setElementText("#sf-helper-target-day-rate", summary.target.mlPerKgDayText ? summary.target.mlPerKgDayText + " (" + summary.target.mlPerKgHourText + ")" : "");
-    setElementText("#sf-helper-target-hour-rate", summary.target.mlPerKgHourText ? summary.target.mlPerKgHourText + " (" + summary.target.mlPerKgDayText + ")" : "");
+    setElementText("#sf-helper-maintenance-calculation", maintenanceCalculation);
+    setElementText("#sf-helper-target-calculation", targetCalculation);
     setElementText("#sf-helper-target-day", summary.target.mlPerDayText || "");
     setElementText("#sf-helper-target-hour", summary.target.mlPerHourText || "");
 
@@ -975,6 +1002,44 @@
     return output;
   }
 
+  function buildFluidSectionHeader(step, title, detail) {
+    var header = createElement("div", { className: "sf-helper-fluid-section-header" });
+    var copy = createElement("div", { className: "sf-helper-fluid-section-copy" });
+
+    header.appendChild(createElement("span", {
+      className: "sf-helper-fluid-step",
+      text: step
+    }));
+    copy.appendChild(createElement("h2", {
+      className: "sf-helper-pane-title",
+      text: title
+    }));
+    copy.appendChild(createElement("p", {
+      className: "sf-helper-fluid-section-help",
+      text: detail
+    }));
+    header.appendChild(copy);
+
+    return header;
+  }
+
+  function buildFluidCalculation(valueId) {
+    var calculation = createElement("div", { className: "sf-helper-fluid-calculation" });
+
+    calculation.appendChild(createElement("span", {
+      className: "sf-helper-fluid-calculation-label",
+      text: "Calculation"
+    }));
+    calculation.appendChild(createElement("span", {
+      className: "sf-helper-fluid-calculation-value",
+      attrs: {
+        id: valueId
+      }
+    }));
+
+    return calculation;
+  }
+
   function buildMaintenanceModeOption(value, title, detail) {
     var label = createElement("label", { className: "sf-helper-radio-option" });
     var input = createElement("input", {
@@ -1050,12 +1115,12 @@
       }
     });
     var grid = createElement("div", { className: "sf-helper-fluid-grid" });
-    var hero = createElement("section", { className: "sf-helper-fluid-hero" });
-    var controls = createElement("div", { className: "sf-helper-fluid-controls" });
-    var summary = createElement("div", { className: "sf-helper-fluid-card sf-helper-fluid-summary" });
+    var summary = createElement("section", { className: "sf-helper-fluid-card sf-helper-fluid-summary" });
+    var summaryHeading = createElement("div", { className: "sf-helper-fluid-summary-heading" });
     var summaryGrid = createElement("div", { className: "sf-helper-fluid-summary-grid" });
-    var results = createElement("div", { className: "sf-helper-fluid-card sf-helper-fluid-results" });
-    var mode = createElement("section", { className: "sf-helper-fluid-card sf-helper-fluid-mode" });
+    var maintenance = createElement("section", {
+      className: "sf-helper-fluid-card sf-helper-fluid-section sf-helper-fluid-maintenance"
+    });
     var maintenanceMode = createElement("div", {
       className: "sf-helper-radio-group",
       attrs: {
@@ -1063,10 +1128,14 @@
         "aria-label": "Maintenance formula"
       }
     });
-    var target = createElement("section", { className: "sf-helper-fluid-card sf-helper-fluid-target" });
+    var maintenanceResults = createElement("div", { className: "sf-helper-fluid-output-grid" });
+    var target = createElement("section", {
+      className: "sf-helper-fluid-card sf-helper-fluid-section sf-helper-fluid-target"
+    });
     var targetInputs = createElement("div", { className: "sf-helper-target-inputs" });
     var targetDayField = createElement("label", { className: "sf-helper-field sf-helper-target-field" });
     var targetHourField = createElement("label", { className: "sf-helper-field sf-helper-target-field" });
+    var targetResults = createElement("div", { className: "sf-helper-fluid-output-grid" });
     var targetDayInput = createElement("input", {
       className: "sf-helper-number-input",
       attrs: {
@@ -1088,43 +1157,78 @@
       }
     });
 
-    summary.appendChild(createElement("h2", {
+    summaryHeading.appendChild(createElement("h2", {
       className: "sf-helper-pane-title",
-      text: "Patient"
+      text: "Current patient"
+    }));
+    summaryHeading.appendChild(createElement("p", {
+      className: "sf-helper-fluid-section-help",
+      text: "Used in both calculations below"
     }));
     summaryGrid.appendChild(buildSummaryItem("Weight", "sf-helper-fluid-weight"));
     summaryGrid.appendChild(buildSummaryItem("Species", "sf-helper-fluid-species"));
-    summaryGrid.appendChild(buildSummaryItem("Maint / day", "sf-helper-maintenance-day"));
-    summaryGrid.appendChild(buildSummaryItem("Maint / hr", "sf-helper-maintenance-hour"));
+    summary.appendChild(summaryHeading);
     summary.appendChild(summaryGrid);
-    results.appendChild(buildFluidOutput("Pump rate", "sf-helper-target-hour", "sf-helper-fluid-output-primary"));
-    results.appendChild(buildFluidOutput("Total per day", "sf-helper-target-day", "sf-helper-fluid-output-secondary"));
 
-    mode.appendChild(createElement("h2", {
-      className: "sf-helper-pane-title",
-      text: "Formula"
-    }));
+    maintenance.appendChild(buildFluidSectionHeader(
+      "1",
+      "Maintenance estimate",
+      "Choose one formula; both results use the patient weight above."
+    ));
     maintenanceMode.appendChild(buildMaintenanceModeOption("default", "Standard", "Dog 60 / Cat 40 mL/kg/day"));
-    maintenanceMode.appendChild(buildMaintenanceModeOption("bodyWeight", "Weight based", "Dog 132, Cat 80 x kg^0.75"));
-    mode.appendChild(maintenanceMode);
+    maintenanceMode.appendChild(buildMaintenanceModeOption("bodyWeight", "Weight based", "Dog 132, Cat 80 × kg^0.75"));
+    maintenance.appendChild(maintenanceMode);
+    maintenance.appendChild(buildFluidCalculation("sf-helper-maintenance-calculation"));
+    maintenanceResults.appendChild(buildFluidOutput(
+      "Hourly rate",
+      "sf-helper-maintenance-hour",
+      "sf-helper-fluid-output-primary"
+    ));
+    maintenanceResults.appendChild(buildFluidOutput(
+      "Daily total",
+      "sf-helper-maintenance-day",
+      "sf-helper-fluid-output-secondary"
+    ));
+    maintenance.appendChild(maintenanceResults);
 
-    target.appendChild(createElement("h2", {
-      className: "sf-helper-pane-title",
-      text: "Target"
-    }));
+    target.appendChild(buildFluidSectionHeader(
+      "2",
+      "Custom fluid target",
+      "Enter either target; the other field updates automatically."
+    ));
     targetDayField.appendChild(createElement("span", {
       className: "sf-helper-field-label",
+      text: "Daily target"
+    }));
+    targetDayField.appendChild(createElement("span", {
+      className: "sf-helper-field-unit",
       text: "mL/kg/day"
     }));
     targetDayField.appendChild(targetDayInput);
     targetHourField.appendChild(createElement("span", {
       className: "sf-helper-field-label",
+      text: "Hourly target"
+    }));
+    targetHourField.appendChild(createElement("span", {
+      className: "sf-helper-field-unit",
       text: "mL/kg/hr"
     }));
     targetHourField.appendChild(targetHourInput);
     targetInputs.appendChild(targetDayField);
     targetInputs.appendChild(targetHourField);
     target.appendChild(targetInputs);
+    target.appendChild(buildFluidCalculation("sf-helper-target-calculation"));
+    targetResults.appendChild(buildFluidOutput(
+      "Pump rate",
+      "sf-helper-target-hour",
+      "sf-helper-fluid-output-primary"
+    ));
+    targetResults.appendChild(buildFluidOutput(
+      "Total per day",
+      "sf-helper-target-day",
+      "sf-helper-fluid-output-secondary"
+    ));
+    target.appendChild(targetResults);
 
     targetDayInput.addEventListener("input", function () {
       state.fluids.targetMode = "day";
@@ -1135,12 +1239,9 @@
       refreshFluids();
     });
 
-    hero.appendChild(summary);
-    hero.appendChild(results);
-    controls.appendChild(mode);
-    controls.appendChild(target);
-    grid.appendChild(hero);
-    grid.appendChild(controls);
+    grid.appendChild(summary);
+    grid.appendChild(maintenance);
+    grid.appendChild(target);
     panel.appendChild(grid);
 
     return panel;

@@ -3,12 +3,14 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const source = fs.readFileSync(path.join(__dirname, "..", "src", "ui.js"), "utf8");
+const cssSource = fs.readFileSync(path.join(__dirname, "..", "src", "ui.css"), "utf8");
 const instrumentedSource = source.replace(
   /\}\)\(\);\s*$/,
   [
     "window.SmartFlowHelperUITest = {",
     "  applyPageNavigation: applyPageNavigation,",
     "  currentRouteKey: currentRouteKey,",
+    "  renderFluidSummary: renderFluidSummary,",
     "  refreshFluids: refreshFluids,",
     "  refreshVitals: refreshVitals,",
     "  state: state",
@@ -16,6 +18,8 @@ const instrumentedSource = source.replace(
     "})();"
   ].join("\n")
 );
+
+const elements = {};
 
 function assert(condition, message) {
   if (!condition) {
@@ -42,8 +46,8 @@ const document = {
   getElementById() {
     return null;
   },
-  querySelector() {
-    return null;
+  querySelector(selector) {
+    return elements[selector] || null;
   },
   querySelectorAll() {
     return [];
@@ -83,6 +87,24 @@ assert(source.indexOf('aria-label": "Minimize Smart Flow Helper"') !== -1, "the 
 assert(source.indexOf("setInterval") === -1, "navigation refresh should not poll");
 assert(source.indexOf('addEventListener("currententrychange"') !== -1, "pushState navigation should be observed");
 assert(source.indexOf('addEventListener("popstate"') !== -1, "history navigation should have a fallback");
+assert(
+  source.indexOf('text: "Current patient"') < source.indexOf('"Maintenance estimate"') &&
+    source.indexOf('"Maintenance estimate"') < source.indexOf('"Custom fluid target"'),
+  "the fluids tab should read from patient context to maintenance and then custom target"
+);
+assert(
+  source.indexOf('buildFluidCalculation("sf-helper-maintenance-calculation")') !== -1,
+  "maintenance inputs should be shown beside their calculation"
+);
+assert(
+  source.indexOf('buildFluidCalculation("sf-helper-target-calculation")') !== -1,
+  "custom target inputs should be shown beside their calculation"
+);
+assert(
+  /\.sf-helper-fluid-grid\s*\{[^}]*flex-direction:\s*column;/s.test(cssSource),
+  "the fluids tab should use a single vertical reading flow"
+);
+assert(source.indexOf('"Maint / day"') === -1, "maintenance outputs should not be mixed into patient details");
 
 const originalRouteKey = ui.currentRouteKey();
 location.search = "?page=2";
@@ -188,6 +210,59 @@ async function checkStaleAsyncResults() {
   await oldFluidsRefresh;
 
   assert(ui.state.fluids.summary.marker === "new", "stale fluids should not replace the current summary");
+
+  [
+    "#sf-helper-fluid-weight",
+    "#sf-helper-fluid-species",
+    "#sf-helper-maintenance-day",
+    "#sf-helper-maintenance-hour",
+    "#sf-helper-maintenance-calculation",
+    "#sf-helper-target-calculation",
+    "#sf-helper-target-day",
+    "#sf-helper-target-hour"
+  ].forEach((selector) => {
+    elements[selector] = { textContent: "" };
+  });
+  elements["#sf-helper-fluid-target-day"] = { value: "" };
+  elements["#sf-helper-fluid-target-hour"] = { value: "" };
+
+  ui.renderFluidSummary(fluidSummary("visible"));
+
+  assert(
+    elements["#sf-helper-maintenance-calculation"].textContent === "10 kg × 60 mL/kg/day",
+    "maintenance should show the patient weight and selected formula together"
+  );
+  assert(
+    elements["#sf-helper-target-calculation"].textContent ===
+      "10 kg × 90 mL/kg/day · equivalent to 3.8 mL/kg/hr",
+    "custom target should show the active and equivalent target values"
+  );
+  assert(
+    elements["#sf-helper-maintenance-hour"].textContent === "25 mL/hr" &&
+      elements["#sf-helper-maintenance-day"].textContent === "600 mL/day",
+    "maintenance results should remain visible in their own section"
+  );
+  assert(
+    elements["#sf-helper-target-hour"].textContent === "38 mL/hr" &&
+      elements["#sf-helper-target-day"].textContent === "900 mL/day",
+    "custom target results should remain visible in their own section"
+  );
+
+  const bodyWeightSummary = fluidSummary("body-weight");
+  bodyWeightSummary.maintenance.mode = "bodyWeight";
+  bodyWeightSummary.maintenance.formula = "132 * BW(kg)^0.75";
+  bodyWeightSummary.target.mode = "hour";
+  ui.renderFluidSummary(bodyWeightSummary);
+
+  assert(
+    elements["#sf-helper-maintenance-calculation"].textContent === "132 × (10 kg)^0.75",
+    "weight-based maintenance should substitute the visible patient weight into its formula"
+  );
+  assert(
+    elements["#sf-helper-target-calculation"].textContent ===
+      "10 kg × 3.8 mL/kg/hr · equivalent to 90 mL/kg/day",
+    "the last-edited hourly target should lead the custom calculation"
+  );
 }
 
 checkStaleAsyncResults().then(() => {

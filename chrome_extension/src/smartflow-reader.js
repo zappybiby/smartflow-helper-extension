@@ -2,7 +2,7 @@
   "use strict";
 
   var API_NAME = "SmartFlowExt";
-  var VERSION = "0.2.0";
+  var VERSION = "0.3.0";
 
   function getValueParsers() {
     if (!window.SmartFlowValueParsers) {

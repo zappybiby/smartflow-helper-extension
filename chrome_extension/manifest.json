@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Smart Flow Sheet Helper",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Read-only helpers for Smart Flow patient and flowsheet data.",
   "content_scripts": [
     {
