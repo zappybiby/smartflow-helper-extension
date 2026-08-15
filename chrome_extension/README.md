@@ -28,7 +28,7 @@ SmartFlowExt.getTechNotesSummary()
 The helpers prefer Smart Flow's Angular scope when available and fall back to rendered DOM text, classes, colors, and current-time ribbon geometry.
 Value notation parsing lives in `src/value-parsers.js` so it can be reused by future tabs and tools.
 
-The in-page `SF` button opens the extension panel. Vitals shows Blood Glucose and Blood Pressure panes side by side, each with its own grouped copy list. Fluids shows patient weight, species, maintenance fluid estimates, and a target mL/kg/day hourly-rate calculator. Notes copies all patient tech notes newest-to-oldest. Patient whiteboards prefetch notes once on load or patient URL change, and refresh again when the Notes tab or Smart Flow's native Notes button is opened.
+The extension panel opens in the bottom-left. Its top-right minimize button collapses it to a small `SF` launcher in the same corner, and the centered `Refresh` button at the bottom manually refreshes the active tab. The active tab also refreshes after Smart Flow navigation; a full page reload reinitializes it, and while minimized the navigation refresh waits until the panel is reopened. Other same-page data changes wait for manual Refresh. Vitals shows Blood Glucose and Blood Pressure panes side by side, each with its own grouped copy list. Fluids shows patient weight, species, maintenance fluid estimates, and a target mL/kg/day hourly-rate calculator. Notes copies all patient tech notes newest-to-oldest and refreshes when the Notes tab or Smart Flow's native Notes button is opened. Controlled Meds omits treatments after their Smart Flow discontinuation time.
 
 Example:
 

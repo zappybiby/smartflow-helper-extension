@@ -21,6 +21,9 @@ jobs:
       - name: Test extension layout
         run: node chrome_extension/tests/layout-check.js
 
+      - name: Test extension navigation refresh
+        run: node chrome_extension/tests/ui-context-check.js
+
       - name: Package extension
         shell: pwsh
         run: ./scripts/package-extension.ps1

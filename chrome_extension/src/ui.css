@@ -2,7 +2,7 @@
   position: fixed;
   left: 20px;
   bottom: 20px;
-  width: min(var(--sf-helper-panel-width, 468px), calc(100vw - 32px));
+  width: 42px;
   z-index: 2147483647;
   color: #1f2328;
   font-family: Arial, Helvetica, sans-serif;
@@ -15,7 +15,7 @@
 }
 
 .sf-helper-launcher {
-  display: none;
+  display: block;
   width: 42px;
   height: 42px;
   border: 1px solid #476173;
@@ -32,13 +32,17 @@
   max-width: 100%;
   height: min(var(--sf-helper-panel-height, 520px), calc(100vh - 32px));
   max-height: min(var(--sf-helper-panel-max-height, 520px), calc(100vh - 32px));
-  display: flex;
+  display: none;
   flex-direction: column;
   overflow: hidden;
   border: 1px solid #b8c0c7;
   border-radius: 8px;
   background: #fbfcfd;
   box-shadow: 0 14px 40px rgba(31, 35, 40, 0.24);
+}
+
+#sf-helper-root.sf-helper-open {
+  width: min(var(--sf-helper-panel-width, 468px), calc(100vw - 32px));
 }
 
 #sf-helper-root.sf-helper-open .sf-helper-panel {
@@ -78,6 +82,11 @@
   color: #243846;
   line-height: 1;
   cursor: pointer;
+}
+
+.sf-helper-minimize-button {
+  font-size: 18px;
+  font-weight: 700;
 }
 
 .sf-helper-tabs {
@@ -542,6 +551,19 @@
   color: #a61b1b;
 }
 
+.sf-helper-footer {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  padding: 8px 10px;
+  border-top: 1px solid #d5dce2;
+  background: #f7f9fa;
+}
+
+.sf-helper-refresh-button {
+  min-width: 88px;
+}
+
 .sf-helper-list {
   max-height: 96px;
   min-height: 68px;
@@ -591,6 +613,10 @@
   #sf-helper-root {
     left: 12px;
     bottom: 12px;
+    width: 42px;
+  }
+
+  #sf-helper-root.sf-helper-open {
     width: calc(100vw - 24px);
   }
 

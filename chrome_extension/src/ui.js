@@ -8,6 +8,7 @@
   var state = {
     activeTab: "vitals",
     activeMetric: "bloodGlucose",
+    vitalsRequestSeq: 0,
     bloodGlucose: {
       results: [],
       formattedText: ""
@@ -21,7 +22,8 @@
       targetMlKgDay: 90,
       targetMlKgHour: 90 / 24,
       targetMode: "day",
-      summary: null
+      summary: null,
+      requestSeq: 0
     },
     notes: {
       notes: [],
@@ -39,6 +41,15 @@
       source: "",
       updatedAt: "",
       requestSeq: 0
+    },
+    pageContext: {
+      generation: 0,
+      dirtyTabs: {
+        vitals: true,
+        fluids: true,
+        notes: true,
+        controlled: true
+      }
     }
   };
 
@@ -245,6 +256,9 @@
   }
 
   function refreshVitals() {
+    var requestSeq = ++state.vitalsRequestSeq;
+    var contextGeneration = state.pageContext.generation;
+
     setStatus("Reading flowsheet...", false);
 
     return Promise.all([
@@ -253,16 +267,34 @@
       helperCall("getBloodPressureResults"),
       helperCall("formatBloodPressureResults")
     ]).then(function (values) {
+      if (
+        requestSeq !== state.vitalsRequestSeq ||
+        contextGeneration !== state.pageContext.generation ||
+        state.activeTab !== "vitals"
+      ) {
+        return null;
+      }
+
       var bgResults = values[0] || [];
       var bpResults = values[2] || [];
 
       renderMetric("bloodGlucose", bgResults, values[1] || "");
       renderMetric("bloodPressure", bpResults, values[3] || "");
       setStatus(bgResults.length || bpResults.length ? "" : "No matching values on this sheet.", false);
+      return values;
     }).catch(function (error) {
+      if (
+        requestSeq !== state.vitalsRequestSeq ||
+        contextGeneration !== state.pageContext.generation ||
+        state.activeTab !== "vitals"
+      ) {
+        return null;
+      }
+
       renderMetric("bloodGlucose", [], "");
       renderMetric("bloodPressure", [], "");
       setStatus(error && error.message ? error.message : String(error), true);
+      return null;
     });
   }
 
@@ -302,6 +334,42 @@
     var match = location.pathname.match(/\/whiteboard\/hosp\/([0-9a-f-]{20,})/i);
 
     return match ? match[1].toLowerCase() : "";
+  }
+
+  function currentRouteKey() {
+    return [location.pathname, location.search, location.hash].join("");
+  }
+
+  function isHelperOpen() {
+    var root = document.getElementById(ROOT_ID);
+
+    return !!root && root.classList.contains(OPEN_CLASS);
+  }
+
+  function canAutoRefresh() {
+    return isHelperOpen() && !document.hidden;
+  }
+
+  function markAllTabsDirty() {
+    Object.keys(state.pageContext.dirtyTabs).forEach(function (tabName) {
+      state.pageContext.dirtyTabs[tabName] = true;
+    });
+  }
+
+  function isTabDirty(tabName) {
+    return !!state.pageContext.dirtyTabs[tabName];
+  }
+
+  function applyPageNavigation() {
+    state.pageContext.generation += 1;
+    markAllTabsDirty();
+
+    state.controlled.requestSeq += 1;
+    state.controlled.loading = false;
+
+    handleLocationChange({
+      contextChange: true
+    });
   }
 
   function resetNotesForPatient(patientKey) {
@@ -368,7 +436,7 @@
       state.notes.loaded = true;
       renderNotes(summary);
 
-      if (shouldShowStatus) {
+      if (shouldShowStatus && state.activeTab === "notes") {
         setStatus(summary && summary.count ? "" : "No notes found for this patient.", false);
       }
 
@@ -381,7 +449,7 @@
       state.notes.loading = false;
       state.notes.loaded = false;
 
-      if (shouldShowStatus) {
+      if (shouldShowStatus && state.activeTab === "notes") {
         renderNotes(null);
         setStatus(error && error.message ? error.message : String(error), true);
       }
@@ -404,35 +472,68 @@
     });
   }
 
-  function handleLocationChange() {
+  function handleLocationChange(options) {
+    options = options || {};
+
     var patientKey = syncNotesPatientKey();
 
     scheduleHelperPlacement();
 
-    if (state.activeTab === "controlled") {
-      setStatus(controlledStatusText(), false);
+    if (!canAutoRefresh()) {
+      return Promise.resolve(null);
     }
 
-    if (patientKey) {
+    if (patientKey && state.activeTab !== "notes") {
       preloadNotesForCurrentPatient();
     }
+
+    return refreshActiveTab({
+      contextChange: !!options.contextChange
+    });
   }
 
   function watchPatientNavigation() {
-    var lastPath = location.pathname;
+    var lastRouteKey = currentRouteKey();
+    var navigationTimer = null;
 
-    window.setInterval(function () {
-      if (location.pathname === lastPath) {
+    state.pageContext.generation = 1;
+
+    function scheduleNavigationRefresh() {
+      if (navigationTimer) {
+        window.clearTimeout(navigationTimer);
+      }
+
+      navigationTimer = window.setTimeout(function () {
+        var nextRouteKey = currentRouteKey();
+
+        navigationTimer = null;
+
+        if (nextRouteKey === lastRouteKey) {
+          return;
+        }
+
+        lastRouteKey = nextRouteKey;
+        applyPageNavigation();
+      }, 100);
+    }
+
+    if (window.navigation && typeof window.navigation.addEventListener === "function") {
+      window.navigation.addEventListener("currententrychange", scheduleNavigationRefresh);
+    }
+
+    window.addEventListener("popstate", scheduleNavigationRefresh);
+    window.addEventListener("hashchange", scheduleNavigationRefresh);
+
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) {
         return;
       }
 
-      lastPath = location.pathname;
-      handleLocationChange();
-    }, 500);
-
-    window.addEventListener("popstate", function () {
-      lastPath = location.pathname;
-      handleLocationChange();
+      if (isTabDirty(state.activeTab) && canAutoRefresh()) {
+        handleLocationChange({
+          contextChange: true
+        });
+      }
     });
   }
 
@@ -471,16 +572,11 @@
     }
 
     var output = document.querySelector("#sf-helper-controlled-output");
-    var refreshButton = document.querySelector("#sf-helper-controlled-refresh");
     var copyButton = document.querySelector("#sf-helper-controlled-copy");
     var count = document.querySelector("#sf-helper-controlled-count");
 
     if (output) {
       output.value = state.controlled.loading ? "Loading..." : state.controlled.formattedText;
-    }
-
-    if (refreshButton) {
-      refreshButton.disabled = !!state.controlled.loading;
     }
 
     if (copyButton) {
@@ -498,8 +594,10 @@
     options = options || {};
 
     var requestSeq = ++state.controlled.requestSeq;
+    var contextGeneration = state.pageContext.generation;
 
     state.controlled.loading = true;
+    state.pageContext.dirtyTabs.controlled = false;
 
     renderControlled();
     setStatus("Reading controlled meds...", false);
@@ -507,30 +605,54 @@
     return helperCall("getControlledMedicationSchedule", [{
       horizonHours: 12
     }], 30000).then(function (summary) {
-      if (requestSeq !== state.controlled.requestSeq) {
+      if (
+        requestSeq !== state.controlled.requestSeq ||
+        contextGeneration !== state.pageContext.generation
+      ) {
+        if (requestSeq === state.controlled.requestSeq) {
+          state.controlled.loading = false;
+          renderControlled();
+        }
+
         return null;
       }
 
       state.controlled.loading = false;
 
       if (summary && summary.source === "not-ready") {
+        state.pageContext.dirtyTabs.controlled = true;
         renderControlled();
-        setStatus("Whiteboard or patient page is not visible yet. " + controlledStatusText(), true);
+        if (state.activeTab === "controlled") {
+          setStatus("Whiteboard or patient page is not visible yet. " + controlledStatusText(), true);
+        }
         return summary;
       }
 
       renderControlled(summary);
-      setStatus(controlledStatusText(), false);
+      if (state.activeTab === "controlled") {
+        setStatus(controlledStatusText(), false);
+      }
 
       return summary;
     }).catch(function (error) {
-      if (requestSeq !== state.controlled.requestSeq) {
+      if (
+        requestSeq !== state.controlled.requestSeq ||
+        contextGeneration !== state.pageContext.generation
+      ) {
+        if (requestSeq === state.controlled.requestSeq) {
+          state.controlled.loading = false;
+          renderControlled();
+        }
+
         return null;
       }
 
       state.controlled.loading = false;
+      state.pageContext.dirtyTabs.controlled = true;
       renderControlled();
-      setStatus(error && error.message ? error.message : String(error), true);
+      if (state.activeTab === "controlled") {
+        setStatus(error && error.message ? error.message : String(error), true);
+      }
 
       return null;
     });
@@ -661,6 +783,8 @@
 
   function refreshFluids() {
     var target = getFluidTargetInputValue();
+    var requestSeq = ++state.fluids.requestSeq;
+    var contextGeneration = state.pageContext.generation;
 
     state.fluids.targetMlKgDay = target.mlKgDay;
     state.fluids.targetMlKgHour = target.mlKgHour;
@@ -669,10 +793,28 @@
     setStatus("Reading patient details...", false);
 
     return helperCall("getFluidRateSummary", [target]).then(function (summary) {
+      if (
+        requestSeq !== state.fluids.requestSeq ||
+        contextGeneration !== state.pageContext.generation ||
+        state.activeTab !== "fluids"
+      ) {
+        return null;
+      }
+
       renderFluidSummary(summary);
+      return summary;
     }).catch(function (error) {
+      if (
+        requestSeq !== state.fluids.requestSeq ||
+        contextGeneration !== state.pageContext.generation ||
+        state.activeTab !== "fluids"
+      ) {
+        return null;
+      }
+
       renderFluidSummary(null);
       setStatus(error && error.message ? error.message : String(error), true);
+      return null;
     });
   }
 
@@ -1078,14 +1220,6 @@
       }
     });
     var actions = createElement("div", { className: "sf-helper-pane-actions" });
-    var refreshButton = createElement("button", {
-      className: "sf-helper-button",
-      text: "Refresh",
-      attrs: {
-        id: "sf-helper-controlled-refresh",
-        type: "button"
-      }
-    });
     var copyButton = createElement("button", {
       className: "sf-helper-button sf-helper-button-primary",
       text: "Copy",
@@ -1108,14 +1242,8 @@
       text: "0 due"
     }));
 
-    refreshButton.addEventListener("click", function () {
-      refreshControlled({
-        force: true
-      });
-    });
     copyButton.addEventListener("click", copyControlledSchedule);
 
-    actions.appendChild(refreshButton);
     actions.appendChild(copyButton);
     pane.appendChild(header);
     pane.appendChild(output);
@@ -1128,6 +1256,10 @@
   function refreshActiveTab(options) {
     options = options || {};
 
+    var tabWasDirty = isTabDirty(state.activeTab);
+
+    state.pageContext.dirtyTabs[state.activeTab] = false;
+
     if (state.activeTab === "fluids") {
       return refreshFluids();
     }
@@ -1137,7 +1269,7 @@
     }
 
     if (state.activeTab === "controlled") {
-      if (options.manual) {
+      if (options.manual || options.contextChange || tabWasDirty || !state.controlled.updatedAt) {
         return refreshControlled({
           force: true
         });
@@ -1201,11 +1333,25 @@
       }
     });
 
+    var launcher = createElement("button", {
+      className: "sf-helper-launcher",
+      text: "SF",
+      attrs: {
+        type: "button",
+        title: "Open Smart Flow Helper",
+        "aria-label": "Open Smart Flow Helper",
+        "aria-controls": "sf-helper-panel",
+        "aria-expanded": "true"
+      }
+    });
+
     var panel = createElement("div", {
       className: "sf-helper-panel",
       attrs: {
+        id: "sf-helper-panel",
         role: "dialog",
-        "aria-label": "Smart Flow Helper"
+        "aria-label": "Smart Flow Helper",
+        "aria-hidden": "false"
       }
     });
 
@@ -1216,15 +1362,16 @@
     }));
 
     var windowActions = createElement("div", { className: "sf-helper-window-actions" });
-    var refreshButton = createElement("button", {
-      className: "sf-helper-icon-button",
-      text: "R",
+    var minimizeButton = createElement("button", {
+      className: "sf-helper-icon-button sf-helper-minimize-button",
+      text: "\u2212",
       attrs: {
         type: "button",
-        title: "Refresh"
+        title: "Minimize",
+        "aria-label": "Minimize Smart Flow Helper"
       }
     });
-    windowActions.appendChild(refreshButton);
+    windowActions.appendChild(minimizeButton);
     header.appendChild(windowActions);
 
     var tabs = createElement("div", {
@@ -1248,6 +1395,17 @@
       }
     });
 
+    var footer = createElement("div", { className: "sf-helper-footer" });
+    var refreshButton = createElement("button", {
+      className: "sf-helper-button sf-helper-refresh-button",
+      text: "Refresh",
+      attrs: {
+        type: "button",
+        title: "Refresh the current tab"
+      }
+    });
+    footer.appendChild(refreshButton);
+
     body.appendChild(buildVitalsPanel());
     body.appendChild(buildFluidsPanel());
     body.appendChild(buildNotesPanel());
@@ -1257,7 +1415,26 @@
     panel.appendChild(header);
     panel.appendChild(tabs);
     panel.appendChild(body);
+    panel.appendChild(footer);
+    root.appendChild(launcher);
     root.appendChild(panel);
+
+    launcher.addEventListener("click", function () {
+      root.classList.add(OPEN_CLASS);
+      launcher.setAttribute("aria-expanded", "true");
+      panel.setAttribute("aria-hidden", "false");
+      scheduleHelperPlacement();
+      refreshActiveTab();
+      minimizeButton.focus();
+    });
+
+    minimizeButton.addEventListener("click", function () {
+      root.classList.remove(OPEN_CLASS);
+      launcher.setAttribute("aria-expanded", "false");
+      panel.setAttribute("aria-hidden", "true");
+      scheduleHelperPlacement();
+      launcher.focus();
+    });
 
     refreshButton.addEventListener("click", function () {
       refreshActiveTab({
@@ -1279,8 +1456,9 @@
     window.addEventListener("scroll", scheduleHelperPlacement, true);
     watchPatientNavigation();
     watchSmartFlowNotesOpen();
-    handleLocationChange();
-    refreshActiveTab();
+    handleLocationChange({
+      contextChange: true
+    });
   }
 
   if (document.readyState === "loading") {

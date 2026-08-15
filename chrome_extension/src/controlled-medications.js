@@ -70,6 +70,16 @@
     "dexmed"
   ];
 
+  // SmartFlow exposes these on parameterBase and treats dateEnded as a strict
+  // cutoff: cells after it are discontinued, while the boundary cell remains.
+  var DISCONTINUED_FLAG_FIELDS = {
+    discontinued: true
+  };
+
+  var DISCONTINUED_AT_FIELDS = {
+    dateended: true
+  };
+
   // SmartFlow labels may start with "O " for owner-provided medications.
   // Keep matching by medication name and preserve the original label for display.
   function normalizeMedicationText(value) {
@@ -113,11 +123,86 @@
     return !!findControlledMedication(value, medications, excludedTerms);
   }
 
+  function isTrueDiscontinuedFlag(value) {
+    if (value === true || value === 1) {
+      return true;
+    }
+
+    var normalized = String(value || "").toLowerCase().trim();
+
+    return normalized === "true" ||
+      normalized === "1" ||
+      normalized === "discontinued";
+  }
+
+  function medicationDiscontinuedAt(parameter) {
+    if (!parameter || typeof parameter !== "object") {
+      return null;
+    }
+
+    var keys = Object.keys(parameter);
+
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      var normalizedKey = key.toLowerCase();
+
+      if (!DISCONTINUED_AT_FIELDS[normalizedKey]) {
+        continue;
+      }
+
+      if (!hasDiscontinuedFlag(parameter)) {
+        continue;
+      }
+
+      var rawValue = parameter[key];
+      if (rawValue === null || rawValue === undefined || rawValue === "" || rawValue === false || rawValue === 0) {
+        continue;
+      }
+
+      var normalizedValue = String(rawValue).toLowerCase().trim();
+      if (!normalizedValue || normalizedValue === "false" || normalizedValue === "0" || normalizedValue === "null") {
+        continue;
+      }
+
+      var parsed = new Date(rawValue);
+      if (!Number.isNaN(parsed.getTime())) {
+        return parsed;
+      }
+    }
+
+    return null;
+  }
+
+  function hasDiscontinuedFlag(parameter) {
+    if (!parameter || typeof parameter !== "object") {
+      return false;
+    }
+
+    return Object.keys(parameter).some(function (key) {
+      return DISCONTINUED_FLAG_FIELDS[key.toLowerCase()] && isTrueDiscontinuedFlag(parameter[key]);
+    });
+  }
+
+  // SmartFlow can discontinue a treatment from an exact time. A timestamp takes
+  // precedence over a general flag so doses through that boundary remain visible.
+  function isMedicationDiscontinuedAt(parameter, dateLike) {
+    var discontinuedAt = medicationDiscontinuedAt(parameter);
+
+    if (discontinuedAt) {
+      var date = new Date(dateLike);
+      return !Number.isNaN(date.getTime()) && date > discontinuedAt;
+    }
+
+    return hasDiscontinuedFlag(parameter);
+  }
+
   window.SmartFlowControlledMedications = {
     defaultMedications: DEFAULT_CONTROLLED_MEDICATIONS,
     defaultExcludedTerms: DEFAULT_EXCLUDED_TERMS,
     findControlledMedication: findControlledMedication,
     isControlledMedicationName: isControlledMedicationName,
+    isMedicationDiscontinuedAt: isMedicationDiscontinuedAt,
+    medicationDiscontinuedAt: medicationDiscontinuedAt,
     normalizeMedicationText: normalizeMedicationText
   };
 })();

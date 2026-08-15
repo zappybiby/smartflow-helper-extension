@@ -2,7 +2,7 @@
   "use strict";
 
   var API_NAME = "SmartFlowExt";
-  var VERSION = "0.1.0";
+  var VERSION = "0.2.0";
 
   function getValueParsers() {
     if (!window.SmartFlowValueParsers) {
@@ -736,6 +736,31 @@
     };
   }
 
+  function rowHasDiscontinuedState(row) {
+    if (!row) {
+      return false;
+    }
+
+    var dataState = String(row.getAttribute("data-discontinued") || "").toLowerCase();
+    if (row.classList.contains("discontinued") || dataState === "true" || dataState === "1") {
+      return true;
+    }
+
+    if (row.querySelector(
+      ".pr-heading.discontinued, " +
+      ".pr-heading-content.discontinued, " +
+      ".pb-name.discontinued"
+    )) {
+      return true;
+    }
+
+    var heading = row.querySelector(".pb-name, .pr-heading-content");
+    var headingStyle = heading ? getComputedStyle(heading) : null;
+    var decoration = headingStyle ? headingStyle.textDecorationLine || headingStyle.textDecoration || "" : "";
+
+    return String(decoration).indexOf("line-through") !== -1;
+  }
+
   function getRowParameter(row) {
     var scope = getAngularScope(row);
     return scope && scope.param ? scope.param : null;
@@ -799,6 +824,14 @@
         var parameter = getRowParameter(row);
         var treatment = getTreatmentName(row, parameter);
         var section = sectionFromParameterType(parameter && parameter.parameterSection) || currentSection;
+        var controlledTools = window.SmartFlowControlledMedications || null;
+        var controlledTreatment = controlledTools && typeof controlledTools.findControlledMedication === "function" ?
+          controlledTools.findControlledMedication(treatment.label) :
+          null;
+        var rowDiscontinued = controlledTreatment ? rowHasDiscontinuedState(row) : false;
+        var discontinuedAt = controlledTreatment && typeof controlledTools.medicationDiscontinuedAt === "function" ?
+          controlledTools.medicationDiscontinuedAt(parameter) :
+          null;
         var cells = Array.prototype.slice.call(row.children)
           .filter(function (cell) {
             return !cell.classList.contains("pr-heading");
@@ -814,6 +847,10 @@
             var cellScope = getAngularScope(cell);
             var hourIndex = cellScope && typeof cellScope.hour === "number" ? cellScope.hour : index;
             var recordedAt = getCellDate(patientScope || cellScope, hourIndex, header);
+            var parameterDiscontinued = controlledTreatment && typeof controlledTools.isMedicationDiscontinuedAt === "function" ?
+              controlledTools.isMedicationDiscontinuedAt(parameter, recordedAt) :
+              false;
+            state.discontinued = state.discontinued || parameterDiscontinued || (rowDiscontinued && !discontinuedAt);
             var entry = {
               section: section,
               treatment: treatment.label,
@@ -1583,7 +1620,10 @@
         var dueDate = parseDateLike(value.date || value.Date || value.datePlanned || value.DatePlanned);
         var bucketDate = dueDate ? floorToHour(dueDate) : null;
 
-        if (!dueDate || dueDate < startTime || dueDate >= endTime) {
+        if (!dueDate ||
+          dueDate < startTime ||
+          dueDate >= endTime ||
+          tools.isMedicationDiscontinuedAt(parameter, dueDate)) {
           return;
         }
 
@@ -1636,7 +1676,13 @@
         entry.columnIndex
       ].join("|");
 
-      if (!match || !entry.state.planned || !dueDate || dueDate < startTime || dueDate >= endTime || seenRows[key]) {
+      if (!match ||
+        !entry.state.planned ||
+        entry.state.discontinued ||
+        !dueDate ||
+        dueDate < startTime ||
+        dueDate >= endTime ||
+        seenRows[key]) {
         return;
       }
 
