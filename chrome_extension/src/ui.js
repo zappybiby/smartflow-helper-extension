@@ -340,6 +340,28 @@
     return [location.pathname, location.search, location.hash].join("");
   }
 
+  function currentPageDataKey() {
+    var patient = document.querySelector("#patient-table .patient-card-container");
+    var patientName = patient && patient.querySelector(".patient-card-patient-name");
+    var table = document.querySelector("#flowsheetTable");
+    var dates = Array.prototype.slice.call(document.querySelectorAll(".current-flowsheet .date"))
+      .map(function (element) {
+        return String(element.textContent || "").replace(/\s+/g, " ").trim();
+      });
+
+    // Observe identity and initial readiness only. Edits to an already loaded
+    // sheet, and the site's clock, still wait for the user's Refresh action.
+    return JSON.stringify([
+      !!patient,
+      patientName ? String(patientName.textContent || patientName.getAttribute("title") || "").trim() : "",
+      !!table,
+      !!(table && table.querySelector("tbody tr.pr-item")),
+      dates,
+      !!document.querySelector("#whiteboard-table, #whiteboard-table-full, .tabs-container"),
+      !!document.querySelector("#whiteboard-table tr[data-testid='whiteboard-patient-row'], .tabs-container [data-hosp]")
+    ]);
+  }
+
   function isHelperOpen() {
     var root = document.getElementById(ROOT_ID);
 
@@ -494,27 +516,55 @@
 
   function watchPatientNavigation() {
     var lastRouteKey = currentRouteKey();
+    var lastPageDataKey = currentPageDataKey();
     var navigationTimer = null;
 
     state.pageContext.generation = 1;
 
     function scheduleNavigationRefresh() {
       if (navigationTimer) {
-        window.clearTimeout(navigationTimer);
+        return;
       }
 
       navigationTimer = window.setTimeout(function () {
         var nextRouteKey = currentRouteKey();
+        var nextPageDataKey = currentPageDataKey();
 
         navigationTimer = null;
 
-        if (nextRouteKey === lastRouteKey) {
+        if (nextRouteKey === lastRouteKey && nextPageDataKey === lastPageDataKey) {
           return;
         }
 
         lastRouteKey = nextRouteKey;
+        lastPageDataKey = nextPageDataKey;
         applyPageNavigation();
       }, 100);
+    }
+
+    // React can render the patient and sheet well after the route changes.
+    // Keep watching those readiness signals, without polling or re-reading
+    // data for ordinary mutations in the sheet or in the helper itself.
+    if (typeof MutationObserver === "function") {
+      var observer = new MutationObserver(function (records) {
+        var siteChanged = records.some(function (record) {
+          var target = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+
+          return !target || !target.closest || !target.closest("#" + ROOT_ID);
+        });
+
+        if (siteChanged) {
+          scheduleNavigationRefresh();
+        }
+      });
+
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ["class", "title", "data-id", "data-hosp"]
+      });
     }
 
     if (window.navigation && typeof window.navigation.addEventListener === "function") {
@@ -786,7 +836,7 @@
       targetCalculation = weightText + " × " + primaryTargetRate;
 
       if (equivalentTargetRate) {
-        targetCalculation += " · equivalent to " + equivalentTargetRate;
+        targetCalculation += " = " + equivalentTargetRate;
       }
     }
 
@@ -979,69 +1029,8 @@
     return stat;
   }
 
-  function buildFluidOutput(label, valueId, className) {
-    var outputClassName = "sf-helper-fluid-output";
-
-    if (className) {
-      outputClassName += " " + className;
-    }
-
-    var output = createElement("div", { className: outputClassName });
-
-    output.appendChild(createElement("div", {
-      className: "sf-helper-fluid-output-label",
-      text: label
-    }));
-    output.appendChild(createElement("div", {
-      className: "sf-helper-fluid-output-value",
-      attrs: {
-        id: valueId
-      }
-    }));
-
-    return output;
-  }
-
-  function buildFluidSectionHeader(step, title, detail) {
-    var header = createElement("div", { className: "sf-helper-fluid-section-header" });
-    var copy = createElement("div", { className: "sf-helper-fluid-section-copy" });
-
-    header.appendChild(createElement("span", {
-      className: "sf-helper-fluid-step",
-      text: step
-    }));
-    copy.appendChild(createElement("h2", {
-      className: "sf-helper-pane-title",
-      text: title
-    }));
-    copy.appendChild(createElement("p", {
-      className: "sf-helper-fluid-section-help",
-      text: detail
-    }));
-    header.appendChild(copy);
-
-    return header;
-  }
-
-  function buildFluidCalculation(valueId) {
-    var calculation = createElement("div", { className: "sf-helper-fluid-calculation" });
-
-    calculation.appendChild(createElement("span", {
-      className: "sf-helper-fluid-calculation-label",
-      text: "Calculation"
-    }));
-    calculation.appendChild(createElement("span", {
-      className: "sf-helper-fluid-calculation-value",
-      attrs: {
-        id: valueId
-      }
-    }));
-
-    return calculation;
-  }
-
-  function buildMaintenanceModeOption(value, title, detail) {
-    var label = createElement("label", { className: "sf-helper-radio-option" });
+  function buildMaintenanceModeOption(value, title) {
+    var label = createElement("label", { className: "sf-helper-fluid-mode-option" });
     var input = createElement("input", {
       attrs: {
         type: "radio",
@@ -1065,12 +1054,8 @@
 
     label.appendChild(input);
     label.appendChild(createElement("span", {
-      className: "sf-helper-radio-label",
+      className: "sf-helper-fluid-mode-label",
       text: title
-    }));
-    label.appendChild(createElement("span", {
-      className: "sf-helper-radio-detail",
-      text: detail
     }));
 
     return label;
@@ -1115,27 +1100,28 @@
       }
     });
     var grid = createElement("div", { className: "sf-helper-fluid-grid" });
-    var summary = createElement("section", { className: "sf-helper-fluid-card sf-helper-fluid-summary" });
-    var summaryHeading = createElement("div", { className: "sf-helper-fluid-summary-heading" });
+    var summary = createElement("section", { className: "sf-helper-fluid-patient" });
     var summaryGrid = createElement("div", { className: "sf-helper-fluid-summary-grid" });
     var maintenance = createElement("section", {
-      className: "sf-helper-fluid-card sf-helper-fluid-section sf-helper-fluid-maintenance"
+      className: "sf-helper-pane sf-helper-fluid-pane sf-helper-fluid-maintenance"
     });
+    var maintenanceHeader = createElement("div", { className: "sf-helper-pane-header" });
     var maintenanceMode = createElement("div", {
-      className: "sf-helper-radio-group",
+      className: "sf-helper-fluid-mode-tabs",
       attrs: {
         role: "radiogroup",
         "aria-label": "Maintenance formula"
       }
     });
-    var maintenanceResults = createElement("div", { className: "sf-helper-fluid-output-grid" });
+    var maintenanceResults = createElement("div", { className: "sf-helper-fluid-result-grid" });
     var target = createElement("section", {
-      className: "sf-helper-fluid-card sf-helper-fluid-section sf-helper-fluid-target"
+      className: "sf-helper-pane sf-helper-fluid-pane sf-helper-fluid-target"
     });
+    var targetHeader = createElement("div", { className: "sf-helper-pane-header" });
     var targetInputs = createElement("div", { className: "sf-helper-target-inputs" });
     var targetDayField = createElement("label", { className: "sf-helper-field sf-helper-target-field" });
     var targetHourField = createElement("label", { className: "sf-helper-field sf-helper-target-field" });
-    var targetResults = createElement("div", { className: "sf-helper-fluid-output-grid" });
+    var targetResults = createElement("div", { className: "sf-helper-fluid-result-grid" });
     var targetDayInput = createElement("input", {
       className: "sf-helper-number-input",
       attrs: {
@@ -1157,48 +1143,34 @@
       }
     });
 
-    summaryHeading.appendChild(createElement("h2", {
+    summary.appendChild(createElement("h2", {
       className: "sf-helper-pane-title",
-      text: "Current patient"
-    }));
-    summaryHeading.appendChild(createElement("p", {
-      className: "sf-helper-fluid-section-help",
-      text: "Used in both calculations below"
+      text: "Patient"
     }));
     summaryGrid.appendChild(buildSummaryItem("Weight", "sf-helper-fluid-weight"));
     summaryGrid.appendChild(buildSummaryItem("Species", "sf-helper-fluid-species"));
-    summary.appendChild(summaryHeading);
     summary.appendChild(summaryGrid);
 
-    maintenance.appendChild(buildFluidSectionHeader(
-      "1",
-      "Maintenance estimate",
-      "Choose one formula; both results use the patient weight above."
-    ));
-    maintenanceMode.appendChild(buildMaintenanceModeOption("default", "Standard", "Dog 60 / Cat 40 mL/kg/day"));
-    maintenanceMode.appendChild(buildMaintenanceModeOption("bodyWeight", "Weight based", "Dog 132, Cat 80 × kg^0.75"));
+    maintenanceHeader.appendChild(createElement("h2", {
+      className: "sf-helper-pane-title",
+      text: "Maintenance"
+    }));
+    maintenanceMode.appendChild(buildMaintenanceModeOption("default", "Standard"));
+    maintenanceMode.appendChild(buildMaintenanceModeOption("bodyWeight", "Weight-based"));
+    maintenance.appendChild(maintenanceHeader);
     maintenance.appendChild(maintenanceMode);
-    maintenance.appendChild(buildFluidCalculation("sf-helper-maintenance-calculation"));
-    maintenanceResults.appendChild(buildFluidOutput(
-      "Hourly rate",
-      "sf-helper-maintenance-hour",
-      "sf-helper-fluid-output-primary"
-    ));
-    maintenanceResults.appendChild(buildFluidOutput(
-      "Daily total",
-      "sf-helper-maintenance-day",
-      "sf-helper-fluid-output-secondary"
-    ));
+    maintenance.appendChild(buildRateRow("Using", "sf-helper-maintenance-calculation"));
+    maintenanceResults.appendChild(buildSummaryItem("Hourly", "sf-helper-maintenance-hour"));
+    maintenanceResults.appendChild(buildSummaryItem("Daily", "sf-helper-maintenance-day"));
     maintenance.appendChild(maintenanceResults);
 
-    target.appendChild(buildFluidSectionHeader(
-      "2",
-      "Custom fluid target",
-      "Enter either target; the other field updates automatically."
-    ));
+    targetHeader.appendChild(createElement("h2", {
+      className: "sf-helper-pane-title",
+      text: "Target"
+    }));
     targetDayField.appendChild(createElement("span", {
       className: "sf-helper-field-label",
-      text: "Daily target"
+      text: "Daily"
     }));
     targetDayField.appendChild(createElement("span", {
       className: "sf-helper-field-unit",
@@ -1207,7 +1179,7 @@
     targetDayField.appendChild(targetDayInput);
     targetHourField.appendChild(createElement("span", {
       className: "sf-helper-field-label",
-      text: "Hourly target"
+      text: "Hourly"
     }));
     targetHourField.appendChild(createElement("span", {
       className: "sf-helper-field-unit",
@@ -1216,18 +1188,11 @@
     targetHourField.appendChild(targetHourInput);
     targetInputs.appendChild(targetDayField);
     targetInputs.appendChild(targetHourField);
+    target.appendChild(targetHeader);
     target.appendChild(targetInputs);
-    target.appendChild(buildFluidCalculation("sf-helper-target-calculation"));
-    targetResults.appendChild(buildFluidOutput(
-      "Pump rate",
-      "sf-helper-target-hour",
-      "sf-helper-fluid-output-primary"
-    ));
-    targetResults.appendChild(buildFluidOutput(
-      "Total per day",
-      "sf-helper-target-day",
-      "sf-helper-fluid-output-secondary"
-    ));
+    target.appendChild(buildRateRow("Using", "sf-helper-target-calculation"));
+    targetResults.appendChild(buildSummaryItem("Pump rate", "sf-helper-target-hour"));
+    targetResults.appendChild(buildSummaryItem("Daily", "sf-helper-target-day"));
     target.appendChild(targetResults);
 
     targetDayInput.addEventListener("input", function () {

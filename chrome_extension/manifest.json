@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Smart Flow Sheet Helper",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Read-only helpers for Smart Flow patient and flowsheet data.",
   "content_scripts": [
     {
@@ -13,6 +13,7 @@
       "js": [
         "src/value-parsers.js",
         "src/controlled-medications.js",
+        "src/site-data.js",
         "src/smartflow-reader.js"
       ],
       "run_at": "document_idle",

@@ -195,50 +195,47 @@
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  gap: 8px;
-  padding-right: 2px;
-  overflow-x: hidden;
-  overflow-y: auto;
+  gap: 7px;
+  overflow: hidden;
 }
 
-.sf-helper-fluid-card {
-  flex: 0 0 auto;
+.sf-helper-fluid-patient {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   min-width: 0;
-  min-height: 0;
+  padding: 4px 8px;
   border: 1px solid #d5dce2;
   border-radius: 6px;
-  background: #ffffff;
-}
-
-.sf-helper-fluid-summary {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
   background: #f7fafb;
-}
-
-.sf-helper-fluid-summary-heading {
-  min-width: 0;
-}
-
-.sf-helper-fluid-summary-heading .sf-helper-fluid-section-help {
-  margin-top: 2px;
 }
 
 .sf-helper-fluid-summary-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  width: min(210px, 68%);
+  min-width: 0;
+  gap: 10px;
+}
+
+.sf-helper-fluid-summary-grid .sf-helper-summary-item {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 5px;
+}
+
+.sf-helper-fluid-summary-grid .sf-helper-summary-value {
+  margin-top: 0;
 }
 
 .sf-helper-summary-item {
   min-width: 0;
 }
 
-.sf-helper-summary-label,
-.sf-helper-fluid-output-label {
+.sf-helper-summary-label {
   color: #56636f;
   font-size: 11px;
   font-weight: 700;
@@ -257,142 +254,114 @@
   white-space: nowrap;
 }
 
-.sf-helper-fluid-section {
+.sf-helper-fluid-pane {
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: 5px;
+}
+
+.sf-helper-fluid-pane.sf-helper-pane + .sf-helper-fluid-pane.sf-helper-pane {
+  padding-top: 6px;
+}
+
+.sf-helper-fluid-mode-tabs {
   display: grid;
-  gap: 6px;
-  padding: 8px 9px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+  min-height: 30px;
+  overflow: hidden;
+  border: 1px solid #c5cdd3;
+  border-radius: 6px;
+  background: #eef3f6;
 }
 
-.sf-helper-fluid-maintenance {
-  border-left: 4px solid #6b8f71;
-}
-
-.sf-helper-fluid-target {
-  border-left: 4px solid #2c7da0;
-}
-
-.sf-helper-fluid-section-header {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  align-items: center;
-  gap: 7px;
-}
-
-.sf-helper-fluid-step {
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
+.sf-helper-fluid-mode-option {
+  display: flex;
+  position: relative;
+  min-width: 0;
+  min-height: 30px;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  background: #e6eef2;
-  color: #284a5d;
+  padding: 5px 8px;
+  border-right: 1px solid #c5cdd3;
+  color: #425466;
+  cursor: pointer;
+}
+
+.sf-helper-fluid-mode-option:last-child {
+  border-right: 0;
+}
+
+.sf-helper-fluid-mode-option:has(input:checked) {
+  background: #ffffff;
+  color: #132f43;
+  box-shadow: inset 0 -2px 0 #2c7da0;
+}
+
+.sf-helper-fluid-mode-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sf-helper-fluid-mode-label {
+  min-width: 0;
+  overflow: hidden;
   font-size: 12px;
   font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.sf-helper-fluid-maintenance .sf-helper-fluid-step {
-  background: #e8f0e9;
-  color: #365c3d;
+.sf-helper-fluid-pane .sf-helper-rate-row {
+  grid-template-columns: 60px minmax(0, 1fr);
+  min-height: 24px;
+  padding: 2px 0;
 }
 
-.sf-helper-fluid-section-copy {
-  min-width: 0;
-}
-
-.sf-helper-fluid-section-help {
-  margin: 2px 0 0;
-  color: #56636f;
+.sf-helper-fluid-pane .sf-helper-rate-label {
   font-size: 11px;
-  line-height: 1.25;
 }
 
-.sf-helper-fluid-section .sf-helper-radio-group {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: minmax(0, 1fr);
-  gap: 6px;
-  margin-top: 0;
+.sf-helper-fluid-pane .sf-helper-rate-value {
+  font-size: 12px;
+  line-height: 1.2;
 }
 
-.sf-helper-fluid-section .sf-helper-radio-option {
-  padding: 6px 8px;
-}
-
-.sf-helper-fluid-calculation {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: baseline;
-  gap: 7px;
-  min-width: 0;
-  padding: 4px 7px;
-  border-radius: 4px;
-  background: #f7f9fa;
-}
-
-.sf-helper-fluid-calculation-label {
-  color: #56636f;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.sf-helper-fluid-calculation-value {
-  min-width: 0;
-  color: #243846;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-}
-
-.sf-helper-fluid-output-grid {
+.sf-helper-fluid-result-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.sf-helper-fluid-output {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
   min-width: 0;
-  min-height: 49px;
-  padding: 6px 8px;
+  overflow: hidden;
   border: 1px solid #d5dce2;
   border-radius: 6px;
-  background: #f7fafb;
+  background: #ffffff;
 }
 
-.sf-helper-fluid-output-primary {
-  border-color: #9bbdca;
-  background: #eaf5f8;
+.sf-helper-fluid-result-grid .sf-helper-summary-item {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 7px;
 }
 
-.sf-helper-fluid-output-secondary {
-  border-color: #cbd5db;
+.sf-helper-fluid-result-grid .sf-helper-summary-item + .sf-helper-summary-item {
+  border-left: 1px solid #d5dce2;
+}
+
+.sf-helper-fluid-result-grid .sf-helper-summary-value {
+  margin-top: 0;
+  color: #132f43;
+  font-size: 14px;
 }
 
 .sf-helper-target-inputs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   min-width: 0;
-  gap: 6px;
-}
-
-.sf-helper-fluid-output-value {
-  min-width: 0;
-  margin-top: 2px;
-  color: #132f43;
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-}
-
-.sf-helper-fluid-output-primary .sf-helper-fluid-output-value {
-  color: #113b4c;
-  font-size: 18px;
+  gap: 5px;
 }
 
 .sf-helper-field.sf-helper-target-field {
@@ -400,11 +369,11 @@
   grid-template-columns: minmax(0, 1fr) auto;
   min-height: 0;
   align-items: baseline;
-  gap: 3px 6px;
-  padding: 6px 7px;
+  gap: 2px 5px;
+  padding: 3px 6px;
   border: 1px solid #d5dce2;
   border-radius: 6px;
-  background: #f7f9fa;
+  background: #ffffff;
 }
 
 .sf-helper-field-unit {
@@ -416,6 +385,8 @@
 
 .sf-helper-target-field .sf-helper-number-input {
   grid-column: 1 / -1;
+  min-height: 24px;
+  padding: 2px 6px;
 }
 
 .sf-helper-pane {

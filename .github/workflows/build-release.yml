@@ -24,6 +24,12 @@ jobs:
       - name: Test extension navigation refresh
         run: node chrome_extension/tests/ui-context-check.js
 
+      - name: Test React site data
+        run: node chrome_extension/tests/site-data-check.js
+
+      - name: Test reader compatibility
+        run: node chrome_extension/tests/reader-compatibility-check.js
+
       - name: Package extension
         shell: pwsh
         run: ./scripts/package-extension.ps1

@@ -2,7 +2,7 @@
   "use strict";
 
   var API_NAME = "SmartFlowExt";
-  var VERSION = "0.3.0";
+  var VERSION = "0.3.1";
 
   function getValueParsers() {
     if (!window.SmartFlowValueParsers) {
@@ -142,7 +142,7 @@
       }
     }
 
-    return null;
+    return window.SmartFlowSiteData ? window.SmartFlowSiteData.getPatientContext() : null;
   }
 
   function parseNumber(value) {
@@ -378,11 +378,11 @@
     var hospitalization = scope.hospitalization;
     var patient = hospitalization.patient || {};
     var owner = patient.owner || {};
-    var weightText = scope.patientWeight || hospitalization.weight || hospitalization.patientWeight || "";
+    var weightText = scope.patientWeight || (scope.flowsheet && scope.flowsheet.weight) || hospitalization.weight || hospitalization.patientWeight || "";
     var species = patient.speciesName || hospitalization.pet || "";
 
     return {
-      source: "angular",
+      source: scope.source || "angular",
       hospitalizationId: hospitalization.id || null,
       flowsheetId: scope.flowsheet ? scope.flowsheet.flowsheetID || null : null,
       name: hospitalization.name || patient.name || "",
@@ -485,7 +485,15 @@
   }
 
   function getPatientPanel() {
-    return readPatientPanelFromScope(getPatientScope()) || readPatientPanelFromDom();
+    var scope = getPatientScope();
+    if (scope) {
+      return readPatientPanelFromScope(scope);
+    }
+    // During React navigation the previous card can remain mounted briefly.
+    if (isModernSite() && window.SmartFlowSiteData && hospitalizationIdFromPath()) {
+      return null;
+    }
+    return readPatientPanelFromDom();
   }
 
   function parseHourLabel(label) {
@@ -763,7 +771,8 @@
 
   function getRowParameter(row) {
     var scope = getAngularScope(row);
-    return scope && scope.param ? scope.param : null;
+    return scope && scope.param ? scope.param :
+      (window.SmartFlowSiteData ? window.SmartFlowSiteData.getRowParameter(row) : null);
   }
 
   function getTreatmentName(row, parameter) {
@@ -796,6 +805,9 @@
     }
 
     var patientScope = getPatientScope();
+    if (isModernSite() && window.SmartFlowSiteData && hospitalizationIdFromPath() && !patientScope) {
+      return null;
+    }
     var headers = getHeaderCells().map(function (header) {
       return {
         index: header.index,
@@ -1196,6 +1208,9 @@
   }
 
   function isControlledScheduleSurfaceReady() {
+    if (isModernSite() && hospitalizationIdFromPath()) {
+      return isPatientPageVisible();
+    }
     return !!visibleWhiteboardPatientIds() || isPatientPageVisible();
   }
 
@@ -1306,21 +1321,75 @@
     return typeof window.fetch === "function" && location.protocol !== "file:";
   }
 
-  function fetchFlowsheetById(flowsheetId) {
-    var services = window.constants && window.constants.services ? window.constants.services : {};
-    var base = services.FLOWSHEET || "/api/v3/flowsheet/?id=";
-    var url = base + encodeURIComponent(flowsheetId);
+  function isModernSite() {
+    return location.hostname === "app.smartflowsheet.com";
+  }
 
+  function fetchJson(url) {
     return window.fetch(url, {
-      credentials: "same-origin"
+      credentials: isModernSite() ? "include" : "same-origin"
     }).then(function (response) {
       if (!response.ok) {
-        throw new Error("Failed to load flowsheet " + flowsheetId + ": HTTP " + response.status);
+        throw new Error("Failed to load Smart Flow data: HTTP " + response.status);
       }
-
       return response.json();
-    }).then(function (payload) {
-      return payload && payload.flowsheet ? payload.flowsheet : payload;
+    });
+  }
+
+  function loadModernPatients() {
+    // Capture the selection before the request so navigation cannot mix patients.
+    var visibleIds = hospitalizationIdFromPath() ? currentPatientIdFilter() : visibleWhiteboardPatientIds();
+    if (!visibleIds) {
+      return Promise.resolve([]);
+    }
+
+    return fetchJson("https://api.smartflowsheet.com/api/v1/whiteboards/data").then(function (payload) {
+      var data = payload && payload.Data;
+      if (!data || !Array.isArray(data.hospitalizations) || !Array.isArray(data.flowsheetData)) {
+        throw new Error("Smart Flow returned an unrecognized whiteboard response.");
+      }
+      var sheetsByPatient = {};
+      data.flowsheetData.forEach(function (item) {
+        sheetsByPatient[String(item.hospitalizationID || "").toLowerCase()] = item;
+      });
+      var selected = data.hospitalizations.filter(function (patient) {
+        return visibleIds[String(patient.id || "").toLowerCase()];
+      });
+      var selectedIds = {};
+      selected.forEach(function (patient) {
+        selectedIds[String(patient.id || "").toLowerCase()] = true;
+      });
+      if (Object.keys(visibleIds).some(function (id) { return !selectedIds[id]; })) {
+        throw new Error("The whiteboard changed. Refresh the page before reading controlled meds.");
+      }
+      return selected.map(function (hospitalization) {
+        var patient = normalizePatientFromHospitalization(hospitalization);
+        var sheets = sheetsByPatient[String(patient.hospitalizationId).toLowerCase()];
+        if (!sheets || !Array.isArray(sheets.flowsheetIds) || !sheets.currentFlowsheetID ||
+          !sheets.flowsheetIds.some(function (id) {
+            return String(id).toLowerCase() === String(sheets.currentFlowsheetID).toLowerCase();
+          })) {
+          throw new Error("Smart Flow did not provide the patient's flowsheet list.");
+        }
+        patient.flowsheetIds = sheets.flowsheetIds.slice();
+        patient.curFlowsheetId = sheets.currentFlowsheetID;
+        return patient;
+      });
+    });
+  }
+
+  function fetchFlowsheetById(flowsheetId) {
+    var services = window.constants && window.constants.services ? window.constants.services : {};
+    var base = isModernSite() ? "https://www.smartflowsheet.com/api/v3/flowsheet?id=" :
+      services.FLOWSHEET || "/api/v3/flowsheet/?id=";
+    var url = base + encodeURIComponent(flowsheetId);
+
+    return fetchJson(url).then(function (payload) {
+      var flowsheet = payload && payload.flowsheet ? payload.flowsheet : payload;
+      if (!flowsheet || String(flowsheet.flowsheetID || flowsheet.flowsheetId || "").toLowerCase() !== String(flowsheetId).toLowerCase()) {
+        throw new Error("Smart Flow returned an unrecognized flowsheet response.");
+      }
+      return flowsheet;
     });
   }
 
@@ -1346,7 +1415,10 @@
         return null;
       }
 
-      return fetchFlowsheetById(flowsheetId).catch(function () {
+      return fetchFlowsheetById(flowsheetId).catch(function (error) {
+        if (isModernSite()) {
+          throw error;
+        }
         return null;
       });
     })).then(function (flowsheets) {
@@ -1880,29 +1952,38 @@
       return summarizeControlledSchedule([], [], startTime, horizonHours, "not-ready");
     }
 
-    var patients = readWhiteboardPatients();
+    var modern = isModernSite();
+    var patientsResult = modern ? loadModernPatients() : readWhiteboardPatients();
+    var visibleEvents = modern ? [] : readVisibleControlledEvents(startTime, endTime);
 
-    if (!patients.length) {
-      return summarizeControlledSchedule([], [], startTime, horizonHours, "none");
-    }
+    return Promise.resolve(patientsResult).then(function (patients) {
+      if (!patients.length) {
+        return summarizeControlledSchedule([], [], startTime, horizonHours, "none");
+      }
 
-    return Promise.all(patients.map(function (patient) {
-      return loadPatientFlowsheets(patient, options).then(function (flowsheets) {
-        flowsheets.forEach(function (flowsheet) {
-          addControlledEventsForFlowsheet(patient, flowsheet, startTime, endTime, allEvents);
+      // Limit parallel patient requests on large whiteboards.
+      var nextPatient = 0;
+      function loadNext() {
+        var patient = patients[nextPatient++];
+        if (!patient) {
+          return Promise.resolve();
+        }
+        return loadPatientFlowsheets(patient, options).then(function (flowsheets) {
+          flowsheets.forEach(function (flowsheet) {
+            addControlledEventsForFlowsheet(patient, flowsheet, startTime, endTime, allEvents);
+          });
+          return loadNext();
         });
+      }
+      return Promise.all(patients.slice(0, 6).map(loadNext)).then(function () {
+        return summarizeControlledSchedule(
+          patients,
+          allEvents.concat(visibleEvents),
+          startTime,
+          horizonHours,
+          modern || allEvents.length ? "whiteboard-flowsheets" : "visible-flowsheet"
+        );
       });
-    })).then(function () {
-      var visibleEvents = readVisibleControlledEvents(startTime, endTime);
-      var source = allEvents.length ? "whiteboard-flowsheets" : "visible-flowsheet";
-
-      return summarizeControlledSchedule(
-        patients,
-        allEvents.concat(visibleEvents),
-        startTime,
-        horizonHours,
-        source
-      );
     });
   }
 
@@ -2275,18 +2356,16 @@
 
   function fetchTechNotesRaw(hospitalizationId) {
     var services = window.constants && window.constants.services ? window.constants.services : {};
-    var base = services.TECHNOTES || "/api/v3/TechNotes/GetNotes/";
+    var base = isModernSite() ? "https://www.smartflowsheet.com/api/v3/technotes/getnotes" :
+      services.TECHNOTES || "/api/v3/TechNotes/GetNotes/";
     var separator = base.indexOf("?") === -1 ? "?" : "&";
-    var url = base + separator + "hospitalizationId=" + encodeURIComponent(hospitalizationId);
+    var url = base + separator + (isModernSite() ? "hospitalizationID=" : "hospitalizationId=") + encodeURIComponent(hospitalizationId);
 
-    return window.fetch(url, {
-      credentials: "same-origin"
-    }).then(function (response) {
-      if (!response.ok) {
-        throw new Error("Failed to load notes: HTTP " + response.status);
+    return fetchJson(url).then(function (notes) {
+      if (!Array.isArray(notes)) {
+        throw new Error("Smart Flow returned an unrecognized notes response.");
       }
-
-      return response.json();
+      return notes;
     });
   }
 
