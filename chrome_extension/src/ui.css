@@ -688,48 +688,78 @@
   }
 }
 
+/* Keep the row names on the left accessible while selecting on the sheet. */
+#sf-helper-root.sf-helper-open .sf-helper-panel:has(.sf-helper-schedule:not([hidden])) {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  width: min(336px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  height: auto;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+}
+
+.sf-helper-panel:has(.sf-helper-schedule:not([hidden])) .sf-helper-tabs {
+  grid-template-columns: repeat(5, auto);
+}
+.sf-helper-panel:has(.sf-helper-schedule:not([hidden])) .sf-helper-tab {
+  padding-inline: 4px;
+}
+.sf-helper-panel:has(.sf-helper-schedule:not([hidden])) .sf-helper-status:empty,
+.sf-helper-panel:has(.sf-helper-schedule:not([hidden]) .sf-helper-schedule-actions:not([hidden])) .sf-helper-footer,
+.sf-helper-schedule [hidden],
+.sf-helper-schedule [role="status"]:empty {
+  display: none;
+}
 .sf-helper-schedule {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  gap: 6px;
 }
-.sf-helper-schedule-list {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  border: 1px solid #d5dce2;
-  border-radius: 6px;
-  background: #fff;
+.sf-helper-schedule > button {
+  justify-self: start;
 }
-.sf-helper-schedule-list strong,
-.sf-helper-schedule-list label {
-  display: block;
-  margin: 0;
-  padding: 4px 8px;
-}
-.sf-helper-schedule-list strong {
-  background: #eef3f6;
-  text-transform: capitalize;
-}
-.sf-helper-schedule-list label {
-  cursor: pointer;
-}
-.sf-helper-schedule-list input {
-  margin: 0 8px 0 0;
-  vertical-align: middle;
-}
-.sf-helper-schedule-controls {
-  display: flex;
-  align-items: end;
-  flex-wrap: wrap;
-  gap: 8px;
-}
+.sf-helper-schedule-summary,
 .sf-helper-schedule-controls label {
   display: grid;
-  gap: 2px;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
   margin: 0;
+  gap: 6px;
+}
+.sf-helper-schedule-summary {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+.sf-helper-schedule-summary span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sf-helper-schedule-controls {
+  display: grid;
+  gap: 4px;
 }
 .sf-helper-schedule-controls select {
-  width: auto;
+  width: 100%;
   margin: 0;
+}
+.sf-helper-schedule-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+#flowsheetTable tr.pr-item .pr-heading:has(> .sf-helper-line-checkbox) {
+  position: relative;
+  padding-inline-start: 26px;
+}
+#flowsheetTable tr.pr-item .pr-heading > .sf-helper-line-checkbox {
+  position: absolute;
+  inset-inline-start: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #2c7da0;
+  cursor: pointer;
 }

@@ -4,6 +4,8 @@
 <table id="flowsheetTable"><tbody></tbody></table>
 <output id="result">Running…</output>
 <script src="../src/schedule-editor.js"></script>
+<script src="../src/schedule-panel.js"></script>
+<script src="../src/ui.js"></script>
 <script>
 (async function () {
   const date = new Date(2026, 10, 17, 7).getTime();
@@ -110,6 +112,35 @@
     afterSave = () => { navigated = true; };
     try { await run(b, requested, () => { if (navigated) throw new Error("sheet changed"); }); } catch (e) { error = e; }
     check(error?.message === "sheet changed" && b.cell.state === "planned", "Navigation stops cleanup");
+    const rows = [a, b, c, charted];
+    a.section = "monitoring";
+    b.section = c.section = charted.section = "activity";
+    window.SmartFlowHelperBridge = { callPageHelper: async () => ({ patient: "test", sheet: "day1", rows }) };
+    document.querySelector('[data-sf-helper-tab="schedule"]').click();
+    await new Promise(resolve => setTimeout(resolve));
+    const panel = document.querySelector('[data-sf-helper-panel="schedule"]');
+    const selectLines = panel.querySelector("button");
+    const box = id => document.querySelector('tr[data-id="' + id + '"] .sf-helper-line-checkbox');
+    check(!box("a"), "Checkboxes stay off the sheet until Select lines");
+    selectLines.click();
+    box("b").click();
+    box("c").click();
+    check(!box("a").checked && box("b").checked, "Duplicate names select independently");
+    check(panel.querySelector(".sf-helper-schedule-summary span").textContent === "Resp. rate, Diet", "Selected names");
+    check(!document.querySelector("[id$='-planning-dialog']"), "Picking a line leaves its editor closed");
+    const oldRow = box("b").closest("tr");
+    const newRow = oldRow.cloneNode(true);
+    newRow.querySelector("input").remove();
+    oldRow.replaceWith(newRow);
+    await new Promise(resolve => setTimeout(resolve));
+    check(box("b")?.checked && !box("a").checked, "Selection survives replacement of a native row");
+    panel.querySelector(".sf-helper-schedule-actions button").click();
+    check(!box("b") && !selectLines.hidden, "Cancel removes sheet checkboxes");
+    selectLines.click();
+    check(!box("b").checked && panel.querySelector(".sf-helper-schedule-summary span").textContent === "None",
+      "Starting over clears the previous selection");
+    document.querySelector('[data-sf-helper-tab="vitals"]').click();
+    check(!box("b"), "Leaving Schedule removes the boxes");
     document.querySelector("#result").textContent = "Passed";
   } catch (error) {
     document.querySelector("#result").textContent = "Failed: " + error.message;
