@@ -1,0 +1,97 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Schedule editor check</title>
+<table id="flowsheetTable"><tbody></tbody></table>
+<output id="result">Running…</output>
+<script src="../src/schedule-editor.js"></script>
+<script>
+(async function () {
+  const table = document.querySelector("tbody");
+  const treatments = [
+    { id: "a", name: "Attitude", schedule: [12, 4] },
+    { id: "b", name: "Resp. rate", schedule: [6, 1] },
+    { id: "c", name: "Diet", schedule: [3, 6] },
+    { id: "d", name: "Resp. rate", schedule: [6, 4] }
+  ];
+  const saves = [];
+  let failSave = false;
+  let onSave = () => {};
+
+  function editor(row) {
+    const modal = document.createElement("section");
+    modal.id = "simple-planning-dialog";
+    modal.innerHTML = '<h1></h1><button class="planning-lock-btn">Lock</button>' +
+      '<div><label>Start at (o’clock)</label><select disabled></select></div>' +
+      '<div><label>Continue every (hours)</label><input role="combobox" aria-controls="hours" readonly disabled></div>' +
+      '<textarea>Existing instructions</textarea><button>Cancel</button><button>Done</button>';
+    document.body.append(modal);
+    modal.querySelector("h1").textContent = row.name;
+    const hour = modal.querySelector("select");
+    const interval = modal.querySelector("input");
+    for (let i = 0; i < 24; i++) hour.add(new Option(i + ":00", i));
+    hour.value = row.schedule[0];
+    interval.value = row.schedule[1] + " hrs.";
+    modal.querySelector(".planning-lock-btn").onclick = event => {
+      event.target.classList.add("planning-lock-unlocked");
+      hour.disabled = interval.disabled = false;
+    };
+    interval.onclick = () => {
+      const list = document.createElement("div");
+      list.id = "hours";
+      list.setAttribute("role", "listbox");
+      document.body.append(list);
+      for (const label of ["Once", "None", "1 hr.", "4 hrs.", "6 hrs.", "24 hrs."]) {
+        const option = document.createElement("div");
+        option.setAttribute("role", "option");
+        option.textContent = label;
+        option.onclick = () => { interval.value = label; list.remove(); };
+        list.append(option);
+      }
+    };
+    const buttons = modal.querySelectorAll("button");
+    buttons[1].onclick = () => modal.remove();
+    buttons[2].onclick = () => {
+      if (!failSave) {
+        row.schedule = [+hour.value, parseInt(interval.value, 10)];
+        saves.push(row.id);
+      }
+      modal.remove();
+      onSave();
+    };
+  }
+
+  for (const row of treatments) {
+    const tr = document.createElement("tr");
+    tr.className = "pr-item";
+    tr.dataset.id = row.id;
+    tr.innerHTML = '<td class="pr-heading"><span class="pb-name"></span></td>';
+    tr.querySelector("span").textContent = row.name;
+    tr.onclick = () => editor(row);
+    table.append(tr);
+  }
+
+  const values = { hour: 3, interval: 6 };
+  const run = (row, guard = () => {}) => SmartFlowScheduleEditor.applyRow(row, values, guard, guard);
+  const check = (condition, message) => { if (!condition) throw new Error(message); };
+  try {
+    for (const row of treatments.slice(0, 3)) await run(row);
+    check(JSON.stringify(saves) === '["a","b"]', "Only selected rows that need a change should save");
+    check(treatments.slice(0, 3).every(row => row.schedule.join() === "3,6"), "3 AM every 6 hours");
+    check(treatments[3].schedule.join() === "6,4", "Duplicate display name is a different row");
+    failSave = true;
+    let error;
+    try { await run(treatments[3]); } catch (e) { error = e; }
+    check(error?.message.includes("did not confirm"), "Reopen should catch a discarded save");
+    document.querySelector("#simple-planning-dialog").remove();
+    failSave = false;
+    let changed = false;
+    onSave = () => { changed = true; };
+    error = null;
+    try { await run(treatments[3], () => { if (changed) throw new Error("sheet changed"); }); } catch (e) { error = e; }
+    check(error?.message === "sheet changed" && !document.querySelector("#simple-planning-dialog"), "Stop on navigation");
+    document.querySelector("#result").textContent = "Passed";
+  } catch (error) {
+    document.querySelector("#result").textContent = "Failed: " + error.message;
+  }
+})();
+</script>

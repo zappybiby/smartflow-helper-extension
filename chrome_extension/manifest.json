@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Smart Flow Sheet Helper",
-  "version": "0.3.1",
-  "description": "Read-only helpers for Smart Flow patient and flowsheet data.",
+  "version": "0.4.0",
+  "description": "Smart Flow patient and flowsheet tools, including bulk schedule changes.",
   "content_scripts": [
     {
       "matches": [
@@ -32,6 +32,8 @@
         "src/controlled-medications.js",
         "src/content-bridge.js",
         "src/ui-layout.js",
+        "src/schedule-editor.js",
+        "src/schedule-panel.js",
         "src/ui.js"
       ],
       "run_at": "document_idle"

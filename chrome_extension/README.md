@@ -1,6 +1,8 @@
 # Smart Flow Sheet Helper
 
-Read-only Chrome extension helpers for Smart Flow pages.
+Chrome extension helpers for Smart Flow pages.
+
+On a patient flowsheet at `app.smartflowsheet.com`, open **Schedule**, check the rows you want, choose **Start at** and **Continue every**, then click **Apply**. Rows appear under their flowsheet section. For example, select Attitude, Resp. rate and Diet, choose 3 AM and 6 hours, and apply once. The helper opens each selected row’s SmartFlow editor and checks the saved values by reopening it. If SmartFlow cannot confirm a row, the batch stops and shows how many rows were verified.
 
 Load `chrome_extension` as an unpacked extension. On a Smart Flow page, the content script exposes:
 

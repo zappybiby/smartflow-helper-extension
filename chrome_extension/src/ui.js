@@ -3,6 +3,7 @@
 
   var ROOT_ID = "sf-helper-root";
   var OPEN_CLASS = "sf-helper-open";
+  var schedulePanel;
   var layoutFrame = null;
   var layoutSecondPassFrame = null;
   var state = {
@@ -384,6 +385,7 @@
 
   function applyPageNavigation() {
     state.pageContext.generation += 1;
+    if (schedulePanel) schedulePanel.reset();
     markAllTabsDirty();
 
     state.controlled.requestSeq += 1;
@@ -1326,6 +1328,11 @@
 
     state.pageContext.dirtyTabs[state.activeTab] = false;
 
+    if (state.activeTab === "schedule") {
+      setStatus("", false);
+      return schedulePanel.refresh();
+    }
+
     if (state.activeTab === "fluids") {
       return refreshFluids();
     }
@@ -1350,6 +1357,7 @@
   }
 
   function selectTab(tabName) {
+    if (state.activeTab === "schedule" && tabName !== "schedule") schedulePanel.reset();
     state.activeTab = tabName;
 
     Array.prototype.slice.call(document.querySelectorAll("[data-sf-helper-tab]")).forEach(function (button) {
@@ -1450,6 +1458,7 @@
     tabs.appendChild(buildTab("fluids", "Fluids", false, false));
     tabs.appendChild(buildTab("notes", "Notes", false, false));
     tabs.appendChild(buildTab("controlled", "Controlled", false, false));
+    tabs.appendChild(buildTab("schedule", "Schedule", false, false));
 
     var body = createElement("div", { className: "sf-helper-body" });
 
@@ -1476,6 +1485,14 @@
     body.appendChild(buildFluidsPanel());
     body.appendChild(buildNotesPanel());
     body.appendChild(buildControlledPanel());
+    schedulePanel = window.SmartFlowSchedulePanel({
+      createElement: createElement,
+      getSheet: function () { return helperCall("getScheduleSheet"); },
+      contextKey: function () {
+        return JSON.stringify([currentRouteKey(), currentPageDataKey(), state.pageContext.generation]);
+      }
+    });
+    body.appendChild(schedulePanel.element);
     body.appendChild(status);
 
     panel.appendChild(header);
@@ -1495,6 +1512,7 @@
     });
 
     minimizeButton.addEventListener("click", function () {
+      if (state.activeTab === "schedule") schedulePanel.reset();
       root.classList.remove(OPEN_CLASS);
       launcher.setAttribute("aria-expanded", "false");
       panel.setAttribute("aria-hidden", "true");

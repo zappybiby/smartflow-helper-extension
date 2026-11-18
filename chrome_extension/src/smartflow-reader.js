@@ -2,7 +2,7 @@
   "use strict";
 
   var API_NAME = "SmartFlowExt";
-  var VERSION = "0.3.1";
+  var VERSION = "0.4.0";
 
   function getValueParsers() {
     if (!window.SmartFlowValueParsers) {
@@ -796,6 +796,26 @@
       prescription: prescriptionText,
       label: label
     };
+  }
+
+  function getScheduleSheet() {
+    var table = document.querySelector("#flowsheetTable");
+    var context = isModernSite() && hospitalizationIdFromPath() && window.SmartFlowSiteData.getPatientContext();
+    if (!table || !context || !context.flowsheet.flowsheetID) return null;
+
+    var rows = [];
+    var section = "";
+    table.querySelectorAll("tr.pr-group, tr.pr-item[data-id]").forEach(function (row) {
+      if (row.classList.contains("pr-group")) {
+        section = textOf(row.querySelector(".pr-group-label"));
+        return;
+      }
+      var name = row.querySelector(".pr-heading .pb-name");
+      if (!name || !isVisible(name) || row.matches(".pb-locked, .locked") || rowHasDiscontinuedState(row) ||
+          window.SmartFlowControlledMedications.isMedicationDiscontinuedAt(getRowParameter(row), Date.now())) return;
+      rows.push({ id: row.dataset.id, name: textOf(name), section: section });
+    });
+    return { patient: context.hospitalization.id, sheet: context.flowsheet.flowsheetID, rows: rows };
   }
 
   function readFlowsheetTable() {
@@ -2639,6 +2659,7 @@
     getPatientPanel: getPatientPanel,
     getCurrentHour: getCurrentHour,
     getFlowsheetTable: readFlowsheetTable,
+    getScheduleSheet: getScheduleSheet,
     getWhiteboardSummary: readWhiteboardSummary,
     findRows: findRows,
     findEntries: findEntries,
