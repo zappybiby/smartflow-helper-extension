@@ -1,94 +1,115 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Schedule editor check</title>
+<title>Bulk schedule check</title>
 <table id="flowsheetTable"><tbody></tbody></table>
 <output id="result">Running…</output>
 <script src="../src/schedule-editor.js"></script>
 <script>
 (async function () {
-  const table = document.querySelector("tbody");
-  const treatments = [
-    { id: "a", name: "Attitude", schedule: [12, 4] },
-    { id: "b", name: "Resp. rate", schedule: [6, 1] },
-    { id: "c", name: "Diet", schedule: [3, 6] },
-    { id: "d", name: "Resp. rate", schedule: [6, 4] }
-  ];
-  const saves = [];
-  let failSave = false;
-  let onSave = () => {};
+  const date = new Date(2026, 10, 17, 7).getTime();
+  const at = index => new Date(date + index * 3600000).toISOString();
+  const requested = { hour: 3, interval: 6, oldHour: 1 };
+  const writes = [];
+  let rejectSave = false;
+  let afterSave = () => {};
 
-  function editor(row) {
-    const modal = document.createElement("section");
-    modal.id = "simple-planning-dialog";
-    modal.innerHTML = '<h1></h1><button class="planning-lock-btn">Lock</button>' +
-      '<div><label>Start at (o’clock)</label><select disabled></select></div>' +
-      '<div><label>Continue every (hours)</label><input role="combobox" aria-controls="hours" readonly disabled></div>' +
-      '<textarea>Existing instructions</textarea><button>Cancel</button><button>Done</button>';
-    document.body.append(modal);
-    modal.querySelector("h1").textContent = row.name;
-    const hour = modal.querySelector("select");
-    const interval = modal.querySelector("input");
-    for (let i = 0; i < 24; i++) hour.add(new Option(i + ":00", i));
-    hour.value = row.schedule[0];
-    interval.value = row.schedule[1] + " hrs.";
-    modal.querySelector(".planning-lock-btn").onclick = event => {
-      event.target.classList.add("planning-lock-unlocked");
-      hour.disabled = interval.disabled = false;
-    };
-    interval.onclick = () => {
-      const list = document.createElement("div");
-      list.id = "hours";
-      list.setAttribute("role", "listbox");
-      document.body.append(list);
-      for (const label of ["Once", "None", "1 hr.", "4 hrs.", "6 hrs.", "24 hrs."]) {
-        const option = document.createElement("div");
-        option.setAttribute("role", "option");
-        option.textContent = label;
-        option.onclick = () => { interval.value = label; list.remove(); };
-        list.append(option);
-      }
-    };
-    const buttons = modal.querySelectorAll("button");
-    buttons[1].onclick = () => modal.remove();
-    buttons[2].onclick = () => {
-      if (!failSave) {
-        row.schedule = [+hour.value, parseInt(interval.value, 10)];
-        saves.push(row.id);
-      }
-      modal.remove();
-      onSave();
-    };
-  }
-
-  for (const row of treatments) {
-    const tr = document.createElement("tr");
+  function mount(id, name, state = "planned") {
+    const row = { id, name, sheetDate: date, start: at(18), frequency: 6, cell: { index: 18, id: id + "-1am", state } };
+    const tr = document.querySelector("tbody").insertRow();
     tr.className = "pr-item";
-    tr.dataset.id = row.id;
-    tr.innerHTML = '<td class="pr-heading"><span class="pb-name"></span></td>';
-    tr.querySelector("span").textContent = row.name;
-    tr.onclick = () => editor(row);
-    table.append(tr);
+    tr.dataset.id = id;
+    tr.innerHTML = '<td class="pr-heading"><span class="pb-name"></span></td><td data-hour-index="18"></td>';
+    const heading = tr.querySelector("span");
+    heading.textContent = name;
+
+    function open(dialogId, index, contents, save) {
+      const editor = document.createElement("section");
+      editor.id = dialogId;
+      row.dialog = { id: dialogId, index };
+      editor.innerHTML = contents + '<div class="bottom-buttons"><button>Done</button></div>';
+      document.body.append(editor);
+      editor.querySelector(".bottom-buttons button").onclick = () => {
+        save(editor);
+        row.dialog = null;
+        editor.remove();
+        afterSave();
+      };
+      return editor;
+    }
+
+    heading.onclick = () => {
+      const editor = open("simple-planning-dialog", null,
+        '<a aria-label="Unlock planning"></a><select id="start-time" disabled></select>' +
+        '<input id="continue-every" aria-controls="intervals" disabled>', el => {
+          writes.push("plan " + id);
+          row.syncing = true;
+          const h = Number(el.querySelector("select").value);
+          const frequency = parseInt(el.querySelector("input").value, 10);
+          setTimeout(() => {
+            row.syncing = false;
+            if (rejectSave) { row.error = true; return; }
+            row.start = at((h + 17) % 24);
+            row.frequency = frequency;
+          }, 20);
+        });
+      const hour = editor.querySelector("select");
+      for (let i = 0; i < 24; i++) hour.add(new Option((i || 24) + ":00", String(i)));
+      hour.value = String(new Date(row.start).getHours());
+      const freq = editor.querySelector("input");
+      freq.value = row.frequency + " hrs.";
+      editor.querySelector("a").onclick = () => { hour.disabled = freq.disabled = false; };
+      freq.oninput = () => {
+        const list = document.createElement("div");
+        list.id = "intervals";
+        const option = document.createElement("div");
+        option.dataset.comboboxOption = "";
+        option.textContent = freq.value + " hrs.";
+        option.onclick = () => { freq.value = option.textContent; list.remove(); };
+        list.append(option);
+        editor.append(list);
+      };
+    };
+    tr.lastChild.oncontextmenu = () => {
+      open("execute-treatment-dialog", 18,
+        '<div id="highlight"><input type="radio" name="h" value="On" checked>' +
+        '<input type="radio" name="h" value="Off"></div>', el => {
+          if (!el.querySelector("[value=Off]").checked) throw new Error("Old highlight is on");
+          writes.push("clear " + id);
+          row.cell = { ...row.cell, state: "clear" };
+        });
+    };
+    return row;
   }
 
-  const values = { hour: 3, interval: 6 };
-  const run = (row, guard = () => {}) => SmartFlowScheduleEditor.applyRow(row, values, guard, guard);
-  const check = (condition, message) => { if (!condition) throw new Error(message); };
+  const run = (row, values = requested, guard = () => {}) => SmartFlowScheduleEditor.applyRow(
+    row, values, guard, () => ({ ...row, cell: values.oldHour === null ? null : { ...row.cell } }));
+  const check = (ok, message) => { if (!ok) throw new Error(message); };
   try {
-    for (const row of treatments.slice(0, 3)) await run(row);
-    check(JSON.stringify(saves) === '["a","b"]', "Only selected rows that need a change should save");
-    check(treatments.slice(0, 3).every(row => row.schedule.join() === "3,6"), "3 AM every 6 hours");
-    check(treatments[3].schedule.join() === "6,4", "Duplicate display name is a different row");
-    failSave = true;
+    const a = mount("a", "Resp. rate"), b = mount("b", "Resp. rate"), c = mount("c", "Diet");
+    const charted = mount("d", "Attitude", "protected");
+    for (const row of [a, c, charted]) await run(row);
+    check(writes.join() === "plan a,clear a,plan c,clear c,plan d", "Only empty old blocks in selected rows are cleared");
+    check(b.start === at(18) && a.start === at(20) && c.start === at(20), "Shift from 1 AM to 3 AM by stable ID");
+    await run(a);
+    check(writes.length === 5, "Already-applied schedule can be retried");
+    c.cell.state = "planned";
+    await run(c);
+    check(writes.at(-1) === "clear c", "Retry just the old highlight when the schedule has already saved");
+    await run(a, { hour: 0, interval: 24, oldHour: null });
+    check(a.frequency === 24 && a.start === at(17), "Midnight and late-list frequency");
+    c.cell.state = "planned";
+    await run(c, { hour: 19, interval: 6, oldHour: 1 });
+    check(c.cell.state === "planned", "1 AM remains due six hours after 7 PM");
+    rejectSave = true;
     let error;
-    try { await run(treatments[3]); } catch (e) { error = e; }
-    check(error?.message.includes("did not confirm"), "Reopen should catch a discarded save");
-    document.querySelector("#simple-planning-dialog").remove();
-    failSave = false;
-    let changed = false;
-    onSave = () => { changed = true; };
-    error = null;
-    try { await run(treatments[3], () => { if (changed) throw new Error("sheet changed"); }); } catch (e) { error = e; }
-    check(error?.message === "sheet changed" && !document.querySelector("#simple-planning-dialog"), "Stop on navigation");
+    try { await run(b); } catch (e) { error = e; }
+    check(error?.message.includes("could not save") && b.cell.state === "planned", "Failed plan must retain old highlight");
+    rejectSave = false;
+    b.error = false;
+    let navigated = false;
+    afterSave = () => { navigated = true; };
+    try { await run(b, requested, () => { if (navigated) throw new Error("sheet changed"); }); } catch (e) { error = e; }
+    check(error?.message === "sheet changed" && b.cell.state === "planned", "Navigation stops cleanup");
     document.querySelector("#result").textContent = "Passed";
   } catch (error) {
     document.querySelector("#result").textContent = "Failed: " + error.message;

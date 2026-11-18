@@ -2,7 +2,7 @@
   "use strict";
 
   var API_NAME = "SmartFlowExt";
-  var VERSION = "0.4.0";
+  var VERSION = "0.4.1";
 
   function getValueParsers() {
     if (!window.SmartFlowValueParsers) {
@@ -798,22 +798,69 @@
     };
   }
 
-  function getScheduleSheet() {
+  function scheduleCell(row, parameter, sheetDate, hour) {
+    if (!Number.isInteger(hour)) return null;
+    var cells = Array.from(row.querySelectorAll("td[data-hour-index][data-cell-param]")).filter(function (cell) {
+      var instant = sheetDate + Number(cell.dataset.hourIndex) * 3600000;
+      return cell.dataset.cellParam === parameter.parameterBaseID && new Date(instant).getHours() === hour;
+    });
+    if (cells.length !== 1) return { state: cells.length ? "ambiguous" : "absent" };
+    var cell = cells[0];
+    var index = Number(cell.dataset.hourIndex);
+    var stamp = Math.floor(sheetDate / 3600000) + index;
+    var value = (parameter.values || []).find(function (entry) {
+      return Math.floor(Date.parse(entry.date) / 3600000) === stamp;
+    });
+    var state = "clear";
+    if (cell.matches(".error-value")) state = "error";
+    else if (cell.matches(".sync-value")) state = "saving";
+    else if (value && value.st === 1 && cell.matches(".planned")) {
+      state = !value.parameterValueID || value.cValue || value.currentValueAsString || value.sText ||
+        value.siItemID || value.isBilled || value.mediaFilePath || cell.textContent.trim() ||
+        cell.matches(".cancelled, .discontinued") ? "protected" : "planned";
+    } else if (cell.matches(".planned") || value?.st === 1) state = "saving";
+    return { state: state, index: index, id: value?.parameterValueID || null };
+  }
+
+  function getScheduleSheet(rowId, oldHour) {
     var table = document.querySelector("#flowsheetTable");
     var context = isModernSite() && hospitalizationIdFromPath() && window.SmartFlowSiteData.getPatientContext();
     if (!table || !context || !context.flowsheet.flowsheetID) return null;
 
     var rows = [];
     var section = "";
+    var sheetDate = Date.parse(context.flowsheet.date);
+    if (!Number.isFinite(sheetDate)) return null;
     table.querySelectorAll("tr.pr-group, tr.pr-item[data-id]").forEach(function (row) {
       if (row.classList.contains("pr-group")) {
         section = textOf(row.querySelector(".pr-group-label"));
         return;
       }
+      if (rowId && row.dataset.id !== rowId) return;
       var name = row.querySelector(".pr-heading .pb-name");
-      if (!name || !isVisible(name) || row.matches(".pb-locked, .locked") || rowHasDiscontinuedState(row) ||
-          window.SmartFlowControlledMedications.isMedicationDiscontinuedAt(getRowParameter(row), Date.now())) return;
-      rows.push({ id: row.dataset.id, name: textOf(name), section: section });
+      var param = getRowParameter(row);
+      if (!name || !param || param.parameterBaseID !== row.dataset.id || param.discontinued || param.isCri ||
+          (param.fluidParameterID && !sameHospitalizationId(param.fluidParameterID, param.parameterBaseID)) ||
+          !isVisible(name) || row.matches(".pb-locked, .locked") || rowHasDiscontinuedState(row)) return;
+      var item = { id: row.dataset.id, name: textOf(name), section: section,
+        start: param.planningStartDate || null, frequency: Number(param.frequency ?? 0) };
+      if (rowId) {
+        item.sheetDate = sheetDate;
+        item.syncing = row.matches(".sync-value");
+        item.error = row.matches(".error-value");
+        item.cell = scheduleCell(row, param, sheetDate, oldHour);
+        var dialog = document.querySelector("#execute-treatment-dialog, [id$='-planning-dialog']");
+        var props = window.SmartFlowSiteData.readComponentProps(dialog, function (p) {
+          return p.param && p.flowsheet;
+        });
+        if (props && props.param.parameterBaseID === rowId && props.flowsheet.flowsheetID === context.flowsheet.flowsheetID) {
+          item.dialog = { id: dialog.id, index: props.hour ?? null };
+          if (item.cell?.id && (props.additionalInfoValues || []).some(function (entry) {
+            return sameHospitalizationId(entry.valueId, item.cell.id) && (entry.value || entry.valueExternalId);
+          })) item.cell.state = "protected";
+        }
+      }
+      rows.push(item);
     });
     return { patient: context.hospitalization.id, sheet: context.flowsheet.flowsheetID, rows: rows };
   }

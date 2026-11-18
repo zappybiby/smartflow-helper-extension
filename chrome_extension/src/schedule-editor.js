@@ -1,165 +1,166 @@
 (function () {
   "use strict";
 
-  const dialogs = "[id$='-planning-dialog']";
-  const fields = {
-    hour: /^start at\b/i,
-    interval: /^continue every\b/i
-  };
+  const planning = "[id$='-planning-dialog']";
+  const execution = "#execute-treatment-dialog";
+  const hourMs = 3600000;
 
   function visible(element) {
     return element && element.checkVisibility({ visibilityProperty: true }) && element.getClientRects().length > 0;
   }
 
-  function only(elements) {
-    return elements.length === 1 ? elements[0] : null;
-  }
-
-  function clean(text) {
-    return String(text || "").replace(/\s+/g, " ").trim();
-  }
-
-  function parse(label, field) {
-    const text = clean(label);
-    if (field === "interval") {
-      const match = /^(\d{1,2})\s*(?:h|hr|hrs|hour|hours)?\.?$/i.exec(text);
-      return match && +match[1] >= 1 && +match[1] <= 24 ? +match[1] : null;
-    }
-    const match = /^(\d{1,2})(?::00)?\s*(am|pm)?$/i.exec(text);
-    if (!match) return null;
-    const hour = +match[1];
-    if (!match[2]) return hour < 24 ? hour : null;
-    if (hour < 1 || hour > 12) return null;
-    return hour % 12 + (match[2].toLowerCase() === "pm" ? 12 : 0);
-  }
-
-  async function waitFor(read, message, guard) {
-    const deadline = Date.now() + 4500;
+  async function waitFor(read, guard, message) {
+    const deadline = Date.now() + 15000;
     do {
       guard();
-      const result = read();
+      const result = await read();
+      guard();
       if (result) return result;
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await new Promise(resolve => setTimeout(resolve, 120));
     } while (Date.now() < deadline);
     throw new Error(message);
   }
 
-  function control(editor, field) {
-    const selector = "select, input:not([type=hidden]):not([type=button]):not([type=submit]), button[aria-haspopup=listbox]";
-    const label = only(Array.from(editor.querySelectorAll("label")).filter(node => fields[field].test(clean(node.textContent))));
-    if (!label) return null;
-    if (label.control && label.control.matches(selector) && visible(label.control)) return label.control;
-    // SmartFlow also renders captions beside a wrapped Mantine dropdown.
-    const next = label.nextElementSibling;
-    if (next && next.matches(selector) && visible(next)) return next;
-    const adjacent = next && only(Array.from(next.querySelectorAll(selector)).filter(visible));
-    if (adjacent) return adjacent;
-    return only(Array.from(label.parentElement.querySelectorAll(selector)).filter(visible));
+  function rowElement(row) {
+    const element = document.querySelector("#flowsheetTable tr.pr-item[data-id=" + CSS.escape(row.id) + "]");
+    if (!visible(element)) throw new Error("The selected flowsheet row is unavailable.");
+    return element;
   }
 
-  function displayed(input) {
-    if (!input) return "";
-    if (input.tagName === "SELECT") return input.options[input.selectedIndex]?.label || "";
-    return input.value || input.textContent;
+  function checkClosed() {
+    if (Array.from(document.querySelectorAll(planning + ", " + execution)).some(visible)) {
+      throw new Error("Close the open SmartFlow editor to continue.");
+    }
   }
 
-  function enabled(input) {
-    return input && !input.matches(":disabled, [aria-disabled=true], [data-disabled=true]");
+  function done(editor) {
+    const button = Array.from(editor.querySelectorAll(".bottom-buttons button")).find(el => el.textContent.trim() === "Done");
+    if (!visible(editor) || !visible(button) || button.disabled) throw new Error("SmartFlow has not enabled Done.");
+    button.click();
   }
 
-  async function setField(editor, field, target, guard) {
-    const input = control(editor, field);
-    if (!enabled(input)) throw new Error("SmartFlow did not enable both schedule fields.");
-    if (parse(displayed(input), field) === target) return;
-    const matches = node => parse(node.label || node.textContent, field) === target && enabled(node);
-    if (input.tagName === "SELECT") {
-      const option = only(Array.from(input.options).filter(matches));
-      if (!option) throw new Error("SmartFlow does not offer the selected " + field + ".");
-      input.selectedIndex = option.index;
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    } else {
-      input.click();
-      const list = await waitFor(() => {
-        const linked = document.getElementById(input.getAttribute("aria-controls") || input.getAttribute("aria-owns"));
-        if (visible(linked)) return linked;
-        return only(Array.from(document.querySelectorAll("[role=listbox]")).filter(visible));
-      }, "The SmartFlow dropdown did not open.", guard);
-      const option = only(Array.from(list.querySelectorAll("[role=option]")).filter(visible).filter(matches));
-      if (!option) throw new Error("SmartFlow does not offer the selected " + field + ".");
-      option.click();
-    }
-    await waitFor(() => parse(displayed(control(editor, field)), field) === target,
-      "SmartFlow did not accept the selected " + field + ".", guard);
+  // The planning form uses the sheet's local start date. On a 7 AM sheet,
+  // choosing 3 AM means the following calendar morning.
+  function startTime(sheetDate, hour) {
+    const start = new Date(sheetDate);
+    if (hour < start.getHours()) start.setDate(start.getDate() + 1);
+    start.setHours(hour, 0, 0, 0);
+    if (start.getHours() !== hour) throw new Error("That hour is unavailable on this sheet.");
+    return start.getTime();
   }
 
-  function editorButton(editor, pattern) {
-    return only(Array.from(editor.querySelectorAll("button, input[type=button], input[type=submit], a"))
-      .filter(node => visible(node) && enabled(node) && pattern.test(clean(node.value || node.textContent))));
+  function hasSchedule(row, start, interval) {
+    return Math.floor(Date.parse(row.start) / hourMs) === Math.floor(start / hourMs) && row.frequency === interval;
   }
 
-  function matchesSchedule(editor, values) {
-    return Object.keys(fields).every(field => parse(displayed(control(editor, field)), field) === values[field]);
+  async function setInterval(input, interval, guard) {
+    // SmartFlow's searchable Mantine select pages the results. Type the
+    // requested interval first so even late options (e.g. 24 hrs.) are mounted.
+    input.focus();
+    input.click();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, String(interval));
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    const label = interval + (interval === 1 ? " hr." : " hrs.");
+    const option = await waitFor(() => {
+      const list = document.getElementById(input.getAttribute("aria-controls"));
+      return Array.from(list?.querySelectorAll("[data-combobox-option]") || [])
+        .find(el => visible(el) && el.textContent.trim() === label);
+    }, guard, "SmartFlow did not offer the requested interval.");
+    option.click();
+    await waitFor(() => input.value === label, guard, "SmartFlow did not accept the interval.");
   }
 
-  async function applyRow(row, values, guard, checkSheet) {
-    function heading() {
-      const tr = document.querySelector("#flowsheetTable tr.pr-item[data-id=" + CSS.escape(row.id) + "]");
-      const name = tr?.querySelector(".pr-heading .pb-name");
-      if (!visible(name) || clean(name.textContent) !== row.name ||
-          tr.matches(".pb-locked, .locked, .discontinued, [data-discontinued=true], [data-discontinued='1']")) {
-        throw new Error("The selected row changed or is unavailable.");
-      }
-      return name;
+  async function saveSchedule(row, values, read, guard) {
+    checkClosed();
+    rowElement(row).querySelector(".pr-heading .pb-name").click();
+    const editor = await waitFor(async () => {
+      const dialog = (await read()).dialog;
+      if (dialog?.id.endsWith("-planning-dialog")) return document.getElementById(dialog.id);
+    }, guard, "SmartFlow did not open this row’s planning editor.");
+    const hour = editor.querySelector("select[id$='start-time']");
+    const interval = editor.querySelector("input[id$='continue-every']");
+    if (!hour || !interval) throw new Error("This row does not offer a repeating schedule.");
+    // Existing editable rows initialize locked in a React effect after the first render.
+    const unlock = await waitFor(() => editor.querySelector("[aria-label='Unlock planning']"),
+      guard, "The existing planning form did not finish loading.");
+    unlock.click();
+    await waitFor(() => !hour.disabled && !interval.disabled, guard, "The schedule is locked.");
+    hour.value = String(values.hour); // Midnight is displayed as 24:00 but has option value 0.
+    hour.dispatchEvent(new Event("change", { bubbles: true }));
+    if (row.frequency !== values.interval) await setInterval(interval, values.interval, guard);
+    const current = await read();
+    if (current.dialog?.id !== editor.id || hour.value !== String(values.hour) ||
+        current.start !== row.start || current.frequency !== row.frequency) {
+      throw new Error("The schedule changed while its editor was open.");
     }
-
-    async function open() {
-      guard();
-      if (Array.from(document.querySelectorAll(dialogs)).some(visible)) {
-        throw new Error("Close the open SmartFlow editor before applying a schedule.");
-      }
-      heading().click();
-      return waitFor(() => {
-        const editor = only(Array.from(document.querySelectorAll(dialogs)).filter(visible));
-        if (!editor) return null;
-        const title = editor.querySelector("h1, h2, [role=heading]");
-        if (clean(title?.textContent) !== row.name) throw new Error("SmartFlow opened a different row editor.");
-        if (!control(editor, "hour") || !control(editor, "interval")) throw new Error("Cannot identify both schedule fields.");
-        return editor;
-      }, "SmartFlow did not open the selected row.", guard);
-    }
-
-    async function close(editor, pattern) {
-      const button = editorButton(editor, pattern);
-      if (!button) throw new Error("The SmartFlow editor action is unavailable.");
-      button.click();
-      await waitFor(() => !visible(editor), "SmartFlow kept the editor open. Review this row.", guard);
-    }
-
-    await checkSheet();
-    const editor = await open();
-    if (matchesSchedule(editor, values)) {
-      await close(editor, /^cancel$/i);
-      return;
-    }
-    const lock = editor.querySelector(".planning-lock-btn:not(.planning-lock-unlocked)");
-    if (visible(lock) && enabled(lock)) {
-      lock.click();
-      await waitFor(() => !visible(lock) || lock.classList.contains("planning-lock-unlocked") ||
-        Object.keys(fields).every(field => enabled(control(editor, field))),
-      "SmartFlow kept the schedule locked.", guard);
-    }
-    await setField(editor, "hour", values.hour, guard);
-    await setField(editor, "interval", values.interval, guard);
-    await checkSheet();
     guard();
-    heading();
-    if (!visible(editor) || clean(editor.querySelector("h1, h2, [role=heading]")?.textContent) !== row.name ||
-        !matchesSchedule(editor, values)) throw new Error("The editor changed before saving.");
-    await close(editor, /^(done|save)$/i);
-    await checkSheet();
-    const saved = await open();
-    if (!matchesSchedule(saved, values)) throw new Error("SmartFlow did not confirm the saved schedule. Review this row.");
-    await close(saved, /^cancel$/i);
+    done(editor);
+  }
+
+  async function clearHighlight(row, values, start, original, read, guard) {
+    if (!original || original.state === "absent") return;
+    const offset = Math.floor(row.sheetDate / hourMs) + original.index - Math.floor(start / hourMs);
+    if (offset >= 0 && offset % values.interval === 0) return;
+    if (original.state === "protected") return "protected";
+    if (original.state !== "planned") return;
+    const current = await read();
+    if (current.cell?.state === "clear") return;
+    if (current.cell?.state === "protected") return "protected";
+
+    function sameCell(snapshot) {
+      return snapshot.cell?.state === "planned" && snapshot.cell.id === original.id &&
+        snapshot.cell.index === original.index && hasSchedule(snapshot, start, values.interval);
+    }
+    if (!sameCell(current)) throw new Error("The old cell changed. Review its highlight.");
+    checkClosed();
+    const target = rowElement(row).querySelector('td[data-hour-index="' + original.index + '"]');
+    if (!target) throw new Error("The old time block is unavailable.");
+    target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+    const editor = await waitFor(async () => {
+      const dialog = (await read()).dialog;
+      return dialog?.id === "execute-treatment-dialog" && dialog.index === original.index && document.querySelector(execution);
+    }, guard, "SmartFlow did not open the old time block.");
+    const off = editor.querySelector("#highlight input[value=Off]");
+    const on = editor.querySelector("#highlight input[value=On]");
+    // The execution form copies the saved status into its controls after mounting.
+    await waitFor(() => on?.checked && off && !off.disabled, guard, "The old highlight cannot be edited.");
+    const latest = await read();
+    if (latest.cell?.state === "protected") {
+      editor.querySelector("a.close")?.click();
+      return "protected";
+    }
+    if (!sameCell(latest)) throw new Error("The old cell changed. Review its highlight.");
+    off.click();
+    const beforeSave = await read();
+    if (!off.checked || beforeSave.dialog?.index !== original.index || !sameCell(beforeSave)) {
+      throw new Error("The old cell changed before saving.");
+    }
+    guard();
+    done(editor);
+    await waitFor(async () => {
+      const result = await read();
+      if (result.cell?.state === "error") throw new Error("SmartFlow could not save the old highlight.");
+      return !visible(editor) && result.cell?.state === "clear";
+    }, guard, "Schedule saved. SmartFlow has not confirmed the old highlight was cleared.");
+    return "cleared";
+  }
+
+  async function applyRow(row, values, guard, read) {
+    const before = await read();
+    if (before.id !== row.id || before.error || before.syncing || ["ambiguous", "error", "saving"].includes(before.cell?.state)) {
+      throw new Error("The row or its old time block is unavailable. Refresh and review it.");
+    }
+    const start = startTime(before.sheetDate, values.hour);
+    if (!hasSchedule(before, start, values.interval)) {
+      await saveSchedule(before, values, read, guard);
+      // Done closes immediately. The row data changes after the planning POST finishes.
+      await waitFor(async () => {
+        const result = await read();
+        if (result.error) throw new Error("SmartFlow could not save this schedule.");
+        return !result.dialog && !result.syncing && hasSchedule(result, start, values.interval);
+      }, guard, "SmartFlow has not confirmed the new schedule.");
+    }
+    return clearHighlight(before, values, start, before.cell, read, guard);
   }
 
   window.SmartFlowScheduleEditor = { applyRow };

@@ -18,6 +18,7 @@
     let revision = 0;
     let running = false;
     let loading = false;
+    let manualClearHour = false;
 
     function addPicker(label, start, end, format) {
       const wrapper = createElement("label", { text: label });
@@ -30,15 +31,27 @@
       return select;
     }
 
-    const hour = addPicker("Start at", 0, 23, h => (h % 12 || 12) + (h < 12 ? " AM" : " PM"));
+    const hourLabel = h => (h % 12 || 12) + (h < 12 ? " AM" : " PM");
+    const hour = addPicker("Start at", 0, 23, hourLabel);
     const interval = addPicker("Continue every", 1, 24, n => n + (n === 1 ? " hour" : " hours"));
+    const clearHour = addPicker("Clear old highlight", 0, 23, hourLabel);
+    clearHour.options[0].text = "Keep";
+    clearHour.addEventListener("change", () => { manualClearHour = true; });
     controls.appendChild(apply);
     element.append(list, controls, status);
+
+    function suggestClearHour() {
+      if (manualClearHour) return;
+      const hours = new Set(sheet?.rows.filter(row => selected.has(row.id))
+        .map(row => new Date(row.start || NaN).getHours()));
+      const [common] = hours;
+      clearHour.value = hours.size === 1 && Number.isInteger(common) ? String(common) : "";
+    }
 
     function update() {
       apply.textContent = "Apply to " + selected.size + (selected.size === 1 ? " row" : " rows");
       apply.disabled = running || loading || !sheet || !selected.size || hour.value === "" || interval.value === "";
-      hour.disabled = interval.disabled = running || !sheet;
+      hour.disabled = interval.disabled = clearHour.disabled = running || !sheet;
       for (const box of list.querySelectorAll("input")) box.disabled = running;
     }
 
@@ -56,6 +69,7 @@
         box.addEventListener("change", () => {
           if (box.checked) selected.add(row.id);
           else selected.delete(row.id);
+          suggestClearHour();
           status.textContent = "";
           update();
         });
@@ -70,7 +84,8 @@
       loading = false;
       sheet = null;
       selected.clear();
-      hour.value = interval.value = status.textContent = "";
+      manualClearHour = false;
+      clearHour.value = hour.value = interval.value = status.textContent = "";
       render();
     }
 
@@ -85,13 +100,15 @@
         if (ticket !== revision || contextKey() !== key) return;
         if (!next || key !== sheetContext || sheet?.patient !== next.patient || sheet?.sheet !== next.sheet) {
           selected.clear();
-          hour.value = interval.value = "";
+          manualClearHour = false;
+          clearHour.value = hour.value = interval.value = "";
         }
         sheet = next;
         sheetContext = key;
         for (const id of selected) {
           if (!sheet?.rows.some(row => row.id === id)) selected.delete(id);
         }
+        suggestClearHour();
         status.textContent = !sheet ? "Open a patient flowsheet to change schedules." :
           !sheet.rows.length ? "No editable rows on this sheet." : "";
         render();
@@ -111,7 +128,8 @@
       if (!event.isTrusted || apply.disabled || running) return;
       const ticket = revision;
       const batch = sheet.rows.filter(row => selected.has(row.id));
-      const values = { hour: Number(hour.value), interval: Number(interval.value) };
+      const values = { hour: Number(hour.value), interval: Number(interval.value),
+        oldHour: clearHour.value === "" ? null : Number(clearHour.value) };
       function guard() {
         if (ticket !== revision || contextKey() !== sheetContext) {
           throw new Error("The patient or sheet changed.");
@@ -120,6 +138,8 @@
       running = true;
       update();
       let completed = 0;
+      let cleared = 0;
+      let protectedCount = 0;
       let current;
       try {
         for (const row of batch) {
@@ -127,14 +147,17 @@
           status.textContent = "Updating " + row.name + " (" + (completed + 1) + " of " + batch.length + ")…";
           async function checkSheet() {
             guard();
-            const live = await getSheet();
+            const live = await getSheet(row.id, values.oldHour);
             guard();
-            if (!live || live.sheet !== sheet.sheet || live.patient !== sheet.patient ||
-                !live.rows.some(item => item.id === row.id && item.name === row.name && item.section === row.section)) {
+            const item = live?.rows.find(item => item.id === row.id && item.name === row.name && item.section === row.section);
+            if (!item || live.sheet !== sheet.sheet || live.patient !== sheet.patient) {
               throw new Error("The row is no longer available on this sheet.");
             }
+            return item;
           }
-          await window.SmartFlowScheduleEditor.applyRow(row, values, guard, checkSheet);
+          const outcome = await window.SmartFlowScheduleEditor.applyRow(row, values, guard, checkSheet);
+          if (outcome === "cleared") cleared++;
+          if (outcome === "protected") protectedCount++;
           guard();
           completed++;
           selected.delete(row.id);
@@ -146,6 +169,8 @@
             current.name + ". " + error.message;
         }
       } finally {
+        if (ticket === revision && cleared) status.textContent += " Cleared " + cleared + " old highlight" + (cleared === 1 ? "." : "s.");
+        if (ticket === revision && protectedCount) status.textContent += " Kept " + protectedCount + " recorded or protected cell" + (protectedCount === 1 ? "." : "s.");
         running = false;
         render();
         if (ticket !== revision && !element.hidden) await refresh();

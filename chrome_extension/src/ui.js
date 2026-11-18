@@ -1487,7 +1487,7 @@
     body.appendChild(buildControlledPanel());
     schedulePanel = window.SmartFlowSchedulePanel({
       createElement: createElement,
-      getSheet: function () { return helperCall("getScheduleSheet"); },
+      getSheet: function (id, oldHour) { return helperCall("getScheduleSheet", [id, oldHour]); },
       contextKey: function () {
         return JSON.stringify([currentRouteKey(), currentPageDataKey(), state.pageContext.generation]);
       }

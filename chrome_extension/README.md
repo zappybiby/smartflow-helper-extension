@@ -2,7 +2,9 @@
 
 Chrome extension helpers for Smart Flow pages.
 
-On a patient flowsheet at `app.smartflowsheet.com`, open **Schedule**, check the rows you want, choose **Start at** and **Continue every**, then click **Apply**. Rows appear under their flowsheet section. For example, select Attitude, Resp. rate and Diet, choose 3 AM and 6 hours, and apply once. The helper opens each selected row’s SmartFlow editor and checks the saved values by reopening it. If SmartFlow cannot confirm a row, the batch stops and shows how many rows were verified.
+On a patient flowsheet, open **Schedule** and check the rows to change. To move Attitude, Resp. rate, and Diet from 1 AM to 3 AM every 6 hours, choose **Start at → 3 AM**, **Continue every → 6 hours**, and **Clear old highlight → 1 AM**, then apply once. The old hour fills in when the selected rows share a start hour. Choose **Keep** to change only the schedule.
+
+SmartFlow saves each row through its own planning editor. After the updated start and interval appear on the sheet, the helper clears the selected old block if it is still planned, empty, and outside the new schedule. Recorded values, media, and billed cells are preserved. If SmartFlow cannot confirm a save, the batch stops at that row. Applying again can finish a pending highlight change.
 
 Load `chrome_extension` as an unpacked extension. On a Smart Flow page, the content script exposes:
 
