@@ -10,17 +10,19 @@
 (async function () {
   const date = new Date(2026, 10, 17, 7).getTime();
   const at = index => new Date(date + index * 3600000).toISOString();
-  const requested = { hour: 3, interval: 6, oldHour: 1 };
+  const requested = { hour: 3, interval: 6 };
+  const pendingCleanup = new Map();
   const writes = [];
   let rejectSave = false;
   let afterSave = () => {};
 
-  function mount(id, name, state = "planned") {
-    const row = { id, name, sheetDate: date, start: at(18), frequency: 6, cell: { index: 18, id: id + "-1am", state } };
+  function mount(id, name, state = "planned", index = 18) {
+    const row = { id, name, sheetDate: date, start: at(index), frequency: 6, cell: { index, id: id + "-old", state } };
     const tr = document.querySelector("tbody").insertRow();
     tr.className = "pr-item";
     tr.dataset.id = id;
     tr.innerHTML = '<td class="pr-heading"><span class="pb-name"></span></td><td data-hour-index="18"></td>';
+    tr.lastChild.dataset.hourIndex = index;
     const heading = tr.querySelector("span");
     heading.textContent = name;
 
@@ -72,7 +74,7 @@
       };
     };
     tr.lastChild.oncontextmenu = () => {
-      open("execute-treatment-dialog", 18,
+      open("execute-treatment-dialog", index,
         '<div id="highlight"><input type="radio" name="h" value="On" checked>' +
         '<input type="radio" name="h" value="Off"></div>', el => {
           if (!el.querySelector("[value=Off]").checked) throw new Error("Old highlight is on");
@@ -83,25 +85,44 @@
     return row;
   }
 
-  const run = (row, values = requested, guard = () => {}) => SmartFlowScheduleEditor.applyRow(
-    row, values, guard, () => ({ ...row, cell: values.oldHour === null ? null : { ...row.cell } }));
+  function run(row, values = requested, guard = () => {}) {
+    const read = hour => ({ ...row, cell: hour === new Date(at(row.cell.index)).getHours() ?
+      { ...row.cell } : null });
+    return SmartFlowScheduleEditor.applyRow(row, values, guard, read, pendingCleanup);
+  }
   const check = (ok, message) => { if (!ok) throw new Error(message); };
   try {
-    const a = mount("a", "Resp. rate"), b = mount("b", "Resp. rate"), c = mount("c", "Diet");
+    const a = mount("a", "Resp. rate"), b = mount("b", "Resp. rate"), c = mount("c", "Diet", "planned", 19);
     const charted = mount("d", "Attitude", "protected");
     for (const row of [a, c, charted]) await run(row);
-    check(writes.join() === "plan a,clear a,plan c,clear c,plan d", "Only empty old blocks in selected rows are cleared");
+    check(writes.join() === "plan a,clear a,plan c,clear c,plan d", "Each row clears its own old block (1 AM or 2 AM)");
     check(b.start === at(18) && a.start === at(20) && c.start === at(20), "Shift from 1 AM to 3 AM by stable ID");
     await run(a);
     check(writes.length === 5, "Already-applied schedule can be retried");
-    c.cell.state = "planned";
-    await run(c);
-    check(writes.at(-1) === "clear c", "Retry just the old highlight when the schedule has already saved");
-    await run(a, { hour: 0, interval: 24, oldHour: null });
+    const retry = mount("retry", "Water", "planned", 17);
+    let interrupted = false;
+    afterSave = () => { interrupted = true; };
+    try { await run(retry, requested, () => { if (interrupted) throw new Error("interrupted"); }); } catch {}
+    afterSave = () => {};
+    await new Promise(resolve => setTimeout(resolve, 40));
+    check(retry.start === at(20) && retry.cell.state === "planned", "The plan saved before cleanup");
+    await run(retry);
+    check(writes.filter(write => write.endsWith(" retry")).join() === "plan retry,clear retry",
+      "Retry clears the original midnight block without a second planning save");
+    await run(a, { hour: 0, interval: 24 });
     check(a.frequency === 24 && a.start === at(17), "Midnight and late-list frequency");
-    c.cell.state = "planned";
-    await run(c, { hour: 19, interval: 6, oldHour: 1 });
-    check(c.cell.state === "planned", "1 AM remains due six hours after 7 PM");
+    const overlaps = mount("overlaps", "Appetite");
+    await run(overlaps, { hour: 19, interval: 6 });
+    check(overlaps.cell.state === "planned", "1 AM remains due six hours after 7 PM");
+    const noStart = mount("new", "Walk");
+    noStart.start = null;
+    await run(noStart);
+    check(noStart.start === at(20) && noStart.cell.state === "planned", "A missing old start leaves other cells alone");
+    const separate = mount("separate", "Walk", "planned", 18);
+    separate.start = at(18 - 24);
+    separate.frequency = 48;
+    await run(separate);
+    check(separate.cell.state === "planned", "A manually highlighted square on an off day stays highlighted");
     rejectSave = true;
     let error;
     try { await run(b); } catch (e) { error = e; }
@@ -119,6 +140,8 @@
     document.querySelector('[data-sf-helper-tab="schedule"]').click();
     await new Promise(resolve => setTimeout(resolve));
     const panel = document.querySelector('[data-sf-helper-panel="schedule"]');
+    check(Array.from(panel.querySelectorAll("select"), el => el.getAttribute("aria-label")).join() === "Start at,Interval",
+      "The only schedule inputs are the new start and interval");
     const selectLines = panel.querySelector("button");
     const box = id => document.querySelector('tr[data-id="' + id + '"] .sf-helper-line-checkbox');
     check(!box("a"), "Checkboxes stay off the sheet until Select lines");

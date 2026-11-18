@@ -27,7 +27,7 @@
     let revision = 0;
     let running = false;
     let loading = false;
-    let manualClearHour = false;
+    const pendingCleanup = new Map();
     let picking = false;
     let observer;
 
@@ -45,19 +45,8 @@
     const hourLabel = h => (h % 12 || 12) + (h < 12 ? " AM" : " PM");
     const hour = addPicker("Start at", 0, 23, hourLabel);
     const interval = addPicker("Interval", 1, 24, n => n + (n === 1 ? " hour" : " hours"));
-    const clearHour = addPicker("Clear old highlight", 0, 23, hourLabel);
-    clearHour.options[0].text = "Keep";
-    clearHour.addEventListener("change", () => { manualClearHour = true; });
     actions.append(cancel, apply);
     element.append(selectLines, summary, controls, actions, status);
-
-    function suggestClearHour() {
-      if (manualClearHour) return;
-      const hours = new Set(sheet?.rows.filter(row => selected.has(row.id))
-        .map(row => new Date(row.start || NaN).getHours()));
-      const [common] = hours;
-      clearHour.value = hours.size === 1 && Number.isInteger(common) ? String(common) : "";
-    }
 
     function update() {
       const labels = (sheet?.rows || []).filter(row => selected.has(row.id)).map(row => row.name);
@@ -69,7 +58,7 @@
       cancel.disabled = running;
       apply.textContent = "Apply to " + selected.size + (selected.size === 1 ? " line" : " lines");
       apply.disabled = running || loading || !sheet || !selected.size || hour.value === "" || interval.value === "";
-      hour.disabled = interval.disabled = clearHour.disabled = running;
+      hour.disabled = interval.disabled = running;
     }
 
     const boxClass = "sf-helper-line-checkbox";
@@ -93,7 +82,6 @@
             if (!picking || running || sheetContext !== contextKey()) return;
             if (box.checked) selected.add(tr.dataset.id);
             else selected.delete(tr.dataset.id);
-            suggestClearHour();
             status.textContent = "";
             update();
           });
@@ -110,8 +98,8 @@
       observer?.disconnect();
       document.querySelectorAll("." + boxClass).forEach(box => box.remove());
       selected.clear();
-      manualClearHour = false;
-      clearHour.value = hour.value = interval.value = "";
+      pendingCleanup.clear();
+      hour.value = interval.value = "";
     }
 
     selectLines.addEventListener("click", () => {
@@ -169,7 +157,6 @@
         for (const id of selected) {
           if (!sheet?.rows.some(row => row.id === id)) selected.delete(id);
         }
-        suggestClearHour();
         status.textContent = !sheet ? "Open a patient flowsheet to change schedules." :
           !sheet.rows.length ? "No editable rows on this sheet." : "";
         if (picking) syncCheckboxes();
@@ -189,8 +176,7 @@
       if (!event.isTrusted || apply.disabled || running) return;
       const ticket = revision;
       const batch = sheet.rows.filter(row => selected.has(row.id));
-      const values = { hour: Number(hour.value), interval: Number(interval.value),
-        oldHour: clearHour.value === "" ? null : Number(clearHour.value) };
+      const values = { hour: Number(hour.value), interval: Number(interval.value) };
       function guard() {
         if (ticket !== revision || contextKey() !== sheetContext) {
           throw new Error("The patient or sheet changed.");
@@ -207,9 +193,9 @@
         for (const row of batch) {
           current = row;
           status.textContent = "Updating " + row.name + " (" + (completed + 1) + " of " + batch.length + ")…";
-          async function checkSheet() {
+          async function checkSheet(cellHour) {
             guard();
-            const live = await getSheet(row.id, values.oldHour);
+            const live = await getSheet(row.id, cellHour);
             guard();
             const item = live?.rows.find(item => item.id === row.id && item.name === row.name && item.section === row.section);
             if (!item || live.sheet !== sheet.sheet || live.patient !== sheet.patient) {
@@ -217,7 +203,7 @@
             }
             return item;
           }
-          const outcome = await window.SmartFlowScheduleEditor.applyRow(row, values, guard, checkSheet);
+          const outcome = await window.SmartFlowScheduleEditor.applyRow(row, values, guard, checkSheet, pendingCleanup);
           if (outcome === "cleared") cleared++;
           if (outcome === "protected") protectedCount++;
           guard();

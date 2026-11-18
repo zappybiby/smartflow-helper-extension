@@ -97,10 +97,13 @@
     done(editor);
   }
 
-  async function clearHighlight(row, values, start, original, read, guard) {
-    if (!original || original.state === "absent") return;
-    const offset = Math.floor(row.sheetDate / hourMs) + original.index - Math.floor(start / hourMs);
-    if (offset >= 0 && offset % values.interval === 0) return;
+  function dueAt(sheetDate, cell, start, interval) {
+    const offset = Math.floor(sheetDate / hourMs) + cell?.index - Math.floor(start / hourMs);
+    return offset === 0 || (offset > 0 && interval > 0 && offset % interval === 0);
+  }
+
+  async function clearHighlight(row, start, interval, original, read, guard) {
+    if (!original || dueAt(row.sheetDate, original, start, interval)) return;
     if (original.state === "protected") return "protected";
     if (original.state !== "planned") return;
     const current = await read();
@@ -109,7 +112,7 @@
 
     function sameCell(snapshot) {
       return snapshot.cell?.state === "planned" && snapshot.cell.id === original.id &&
-        snapshot.cell.index === original.index && hasSchedule(snapshot, start, values.interval);
+        snapshot.cell.index === original.index && hasSchedule(snapshot, start, interval);
     }
     if (!sameCell(current)) throw new Error("The old cell changed. Review its highlight.");
     checkClosed();
@@ -145,22 +148,43 @@
     return "cleared";
   }
 
-  async function applyRow(row, values, guard, read) {
-    const before = await read();
-    if (before.id !== row.id || before.error || before.syncing || ["ambiguous", "error", "saving"].includes(before.cell?.state)) {
-      throw new Error("The row or its old time block is unavailable. Refresh and review it.");
+  async function applyRow(row, values, guard, read, pendingCleanup = new Map()) {
+    const live = await read();
+    if (live.id !== row.id || live.error || live.syncing) {
+      throw new Error("The row is unavailable. Refresh and review it.");
     }
-    const start = startTime(before.sheetDate, values.hour);
-    if (!hasSchedule(before, start, values.interval)) {
-      await saveSchedule(before, values, read, guard);
-      // Done closes immediately. The row data changes after the planning POST finishes.
-      await waitFor(async () => {
-        const result = await read();
-        if (result.error) throw new Error("SmartFlow could not save this schedule.");
-        return !result.dialog && !result.syncing && hasSchedule(result, start, values.interval);
-      }, guard, "SmartFlow has not confirmed the new schedule.");
+    const start = startTime(live.sheetDate, values.hour);
+    const pending = pendingCleanup.get(row.id);
+    if (pending && pending.sheetDate === live.sheetDate && hasSchedule(live, pending.start, pending.interval)) {
+      // The planning save can succeed even if switching off the old square fails.
+      const result = await clearHighlight(live, pending.start, pending.interval, pending.cell, () => read(pending.hour), guard);
+      pendingCleanup.delete(row.id);
+      if (hasSchedule(live, start, values.interval)) return result;
     }
-    return clearHighlight(before, values, start, before.cell, read, guard);
+    pendingCleanup.delete(row.id);
+    if (hasSchedule(live, start, values.interval)) return;
+
+    const hour = live.start ? new Date(live.start).getHours() : NaN;
+    const readOldCell = () => read(Number.isInteger(hour) ? hour : null);
+    const before = await readOldCell();
+    if (before.start !== live.start || before.frequency !== live.frequency || before.sheetDate !== live.sheetDate ||
+        before.error || before.syncing || ["ambiguous", "error", "saving"].includes(before.cell?.state)) {
+      throw new Error("The row or its old time block changed. Refresh and review it.");
+    }
+    const oldCell = dueAt(before.sheetDate, before.cell, Date.parse(before.start), before.frequency) ? before.cell : null;
+    if (oldCell?.state === "planned") {
+      pendingCleanup.set(row.id, { hour, start, interval: values.interval, sheetDate: before.sheetDate, cell: oldCell });
+    }
+    await saveSchedule(before, values, readOldCell, guard);
+    // Done closes immediately. The row data changes after the planning POST finishes.
+    await waitFor(async () => {
+      const result = await readOldCell();
+      if (result.error) throw new Error("SmartFlow could not save this schedule.");
+      return !result.dialog && !result.syncing && hasSchedule(result, start, values.interval);
+    }, guard, "SmartFlow has not confirmed the new schedule.");
+    const result = await clearHighlight(before, start, values.interval, oldCell, readOldCell, guard);
+    pendingCleanup.delete(row.id);
+    return result;
   }
 
   window.SmartFlowScheduleEditor = { applyRow };
