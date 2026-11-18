@@ -763,3 +763,13 @@
   accent-color: #2c7da0;
   cursor: pointer;
 }
+
+/* SmartFlow puts simple planning beside its backdrop and the other editors inside it. */
+.sf-helper-quiet-editor,
+.modal-backdrop:has(+ .sf-helper-quiet-editor),
+.modal-backdrop:has(> .modal-wrapper > .sf-helper-quiet-editor) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  interactivity: inert;
+  transition: none !important;
+}

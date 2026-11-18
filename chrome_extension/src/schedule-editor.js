@@ -33,6 +33,35 @@
     }
   }
 
+  async function withQuietEditor(selector, edit) {
+    checkClosed();
+    const marked = new Set();
+    let editor;
+    function conceal(element) {
+      if (element && !marked.has(element)) {
+        element.classList.add("sf-helper-quiet-editor");
+        marked.add(element);
+      }
+    }
+    // React mounts the editor after the click and portals the interval menu outside it.
+    // Mark those specific nodes before the browser paints, including on slower sheets.
+    const observer = new MutationObserver(() => {
+      editor ??= document.querySelector(selector);
+      if (!editor?.isConnected) return;
+      conceal(editor);
+      const menuId = editor.querySelector("input[id$='continue-every']")?.getAttribute("aria-controls");
+      const list = menuId && document.getElementById(menuId);
+      if (list && !editor.contains(list)) conceal(list.closest(".mantine-Select-dropdown") || list);
+    });
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-controls"] });
+    try {
+      return await edit();
+    } finally {
+      observer.disconnect();
+      for (const node of marked) node.classList.remove("sf-helper-quiet-editor");
+    }
+  }
+
   function done(editor) {
     const button = Array.from(editor.querySelectorAll(".bottom-buttons button")).find(el => el.textContent.trim() === "Done");
     if (!visible(editor) || !visible(button) || button.disabled) throw new Error("SmartFlow has not enabled Done.");
@@ -56,7 +85,7 @@
   async function setInterval(input, interval, guard) {
     // SmartFlow's searchable Mantine select pages the results. Type the
     // requested interval first so even late options (e.g. 24 hrs.) are mounted.
-    input.focus();
+    input.focus({ preventScroll: true });
     input.click();
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, String(interval));
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -71,7 +100,6 @@
   }
 
   async function saveSchedule(row, values, read, guard) {
-    checkClosed();
     rowElement(row).querySelector(".pr-heading .pb-name").click();
     const editor = await waitFor(async () => {
       const dialog = (await read()).dialog;
@@ -95,6 +123,7 @@
     }
     guard();
     done(editor);
+    await waitFor(() => !visible(editor), guard, "SmartFlow did not close the planning editor.");
   }
 
   function dueAt(sheetDate, cell, start, interval) {
@@ -115,7 +144,10 @@
         snapshot.cell.index === original.index && hasSchedule(snapshot, start, interval);
     }
     if (!sameCell(current)) throw new Error("The old cell changed. Review its highlight.");
-    checkClosed();
+    return withQuietEditor(execution, () => turnHighlightOff(row, original, read, guard, sameCell));
+  }
+
+  async function turnHighlightOff(row, original, read, guard, sameCell) {
     const target = rowElement(row).querySelector('td[data-hour-index="' + original.index + '"]');
     if (!target) throw new Error("The old time block is unavailable.");
     target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
@@ -175,7 +207,7 @@
     if (oldCell?.state === "planned") {
       pendingCleanup.set(row.id, { hour, start, interval: values.interval, sheetDate: before.sheetDate, cell: oldCell });
     }
-    await saveSchedule(before, values, readOldCell, guard);
+    await withQuietEditor(planning, () => saveSchedule(before, values, readOldCell, guard));
     // Done closes immediately. The row data changes after the planning POST finishes.
     await waitFor(async () => {
       const result = await readOldCell();

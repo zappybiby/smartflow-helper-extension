@@ -1,6 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>Bulk schedule check</title>
+<link rel="stylesheet" href="../src/ui.css">
 <table id="flowsheetTable"><tbody></tbody></table>
 <output id="result">Running…</output>
 <script src="../src/schedule-editor.js"></script>
@@ -92,9 +93,14 @@
   }
   const check = (ok, message) => { if (!ok) throw new Error(message); };
   try {
+    let quietSaves = 0;
+    document.addEventListener("click", event => {
+      if (event.target.closest(".sf-helper-quiet-editor .bottom-buttons")) quietSaves++;
+    }, true);
     const a = mount("a", "Resp. rate"), b = mount("b", "Resp. rate"), c = mount("c", "Diet", "planned", 19);
     const charted = mount("d", "Attitude", "protected");
     for (const row of [a, c, charted]) await run(row);
+    check(quietSaves === 5, "All three planning forms and the two old-square forms saved in the background");
     check(writes.join() === "plan a,clear a,plan c,clear c,plan d", "Each row clears its own old block (1 AM or 2 AM)");
     check(b.start === at(18) && a.start === at(20) && c.start === at(20), "Shift from 1 AM to 3 AM by stable ID");
     await run(a);
@@ -133,6 +139,14 @@
     afterSave = () => { navigated = true; };
     try { await run(b, requested, () => { if (navigated) throw new Error("sheet changed"); }); } catch (e) { error = e; }
     check(error?.message === "sheet changed" && b.cell.state === "planned", "Navigation stops cleanup");
+    const fault = mount("fault", "Water");
+    const faultHeading = document.querySelector('tr[data-id="fault"] .pb-name');
+    faultHeading.addEventListener("click", () => document.querySelector("#start-time").remove(), { once: true });
+    try { await run(fault); } catch (e) { error = e; }
+    const unfinished = document.querySelector("#simple-planning-dialog");
+    check(error?.message.includes("repeating schedule") && unfinished && !unfinished.classList.contains("sf-helper-quiet-editor"),
+      "A native form that needs attention is visible again");
+    unfinished.remove();
     const rows = [a, b, c, charted];
     a.section = "monitoring";
     b.section = c.section = charted.section = "activity";
