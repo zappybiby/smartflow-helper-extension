@@ -30,6 +30,9 @@ jobs:
       - name: Test reader compatibility
         run: node chrome_extension/tests/reader-compatibility-check.js
 
+      - name: Test recurring cell colors
+        run: node chrome_extension/tests/recurring-color-check.js
+
       - name: Package extension
         shell: pwsh
         run: ./scripts/package-extension.ps1

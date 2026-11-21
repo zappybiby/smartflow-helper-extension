@@ -5,6 +5,7 @@
 <table id="flowsheetTable"><tbody></tbody></table>
 <output id="result">Running…</output>
 <script src="../src/schedule-editor.js"></script>
+<script src="../src/recurring-color.js"></script>
 <script src="../src/schedule-panel.js"></script>
 <script src="../src/ui.js"></script>
 <script>
@@ -147,6 +148,37 @@
     check(error?.message.includes("repeating schedule") && unfinished && !unfinished.classList.contains("sf-helper-quiet-editor"),
       "A native form that needs attention is visible again");
     unfinished.remove();
+    const fluid = mount("fluid", "Fluids");
+    const pink = SmartFlowRecurringColor.palette.find(color => color.name === "Pink");
+    const square = document.querySelector('tr[data-id="fluid"] td[data-hour-index]');
+    square.dataset.cellParam = fluid.id;
+    square.classList.add("planned");
+    let colorDialogs = 0;
+    square.oncontextmenu = () => {
+      colorDialogs++;
+      const editor = document.createElement("section");
+      editor.id = "execute-treatment-dialog";
+      fluid.dialog = { id: editor.id, index: 18 };
+      editor.innerHTML = '<div id="highlight"><input type="radio" value="On" checked></div>' +
+        '<div class="colors-block"><div class="button6"></div></div><div class="bottom-buttons"><button>Done</button></div>';
+      document.body.append(editor);
+      const swatch = editor.querySelector(".button6");
+      swatch.onclick = () => swatch.classList.add("selected");
+      editor.querySelector("button").onclick = () => {
+        check(editor.classList.contains("sf-helper-quiet-editor") && swatch.classList.contains("selected"), "Pink selected in background");
+        editor.remove();
+        delete fluid.dialog;
+        setTimeout(() => { fluid.cell.color = pink.color; }, 10);
+      };
+    };
+    const paint = () => SmartFlowScheduleEditor.colorCell(fluid, 18, pink, () => {}, async () => fluid);
+    check(await paint() && fluid.cell.state === "planned" && fluid.start === at(18), "Color preserves the planned hour");
+    check(!(await paint()), "Already pink");
+    for (const state of ["protected", "clear"]) {
+      fluid.cell = { ...fluid.cell, state, color: 0xffff00 };
+      check(!(await paint()), "Skip " + state + " cell");
+    }
+    check(colorDialogs === 1, "Retry, blank and charted squares never open a color editor");
     const rows = [a, b, c, charted];
     a.section = "monitoring";
     b.section = c.section = charted.section = "activity";
@@ -154,7 +186,7 @@
     document.querySelector('[data-sf-helper-tab="schedule"]').click();
     await new Promise(resolve => setTimeout(resolve));
     const panel = document.querySelector('[data-sf-helper-panel="schedule"]');
-    check(Array.from(panel.querySelectorAll("select"), el => el.getAttribute("aria-label")).join() === "Start at,Interval",
+    check(Array.from(panel.querySelectorAll("label:not([hidden]) select"), el => el.getAttribute("aria-label")).join() === "Start at,Interval",
       "The only schedule inputs are the new start and interval");
     const selectLines = panel.querySelector("button");
     const box = id => document.querySelector('tr[data-id="' + id + '"] .sf-helper-line-checkbox');

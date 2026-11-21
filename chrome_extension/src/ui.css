@@ -716,13 +716,14 @@
   display: grid;
   gap: 6px;
 }
-.sf-helper-schedule > button {
-  justify-self: start;
+.sf-helper-schedule-modes {
+  display: flex;
+  gap: 6px;
 }
 .sf-helper-schedule-summary,
 .sf-helper-schedule-controls label {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
+  grid-template-columns: 125px minmax(0, 1fr);
   align-items: center;
   margin: 0;
   gap: 6px;
@@ -742,6 +743,9 @@
 .sf-helper-schedule-controls select {
   width: 100%;
   margin: 0;
+}
+.sf-helper-schedule-controls input[type="checkbox"] {
+  justify-self: start;
 }
 .sf-helper-schedule-actions {
   display: flex;

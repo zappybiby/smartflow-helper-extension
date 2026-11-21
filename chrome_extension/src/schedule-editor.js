@@ -219,5 +219,55 @@
     return result;
   }
 
-  window.SmartFlowScheduleEditor = { applyRow };
+  // Choosing a swatch also sets Highlight to On in SmartFlow. Only open an
+  // existing, empty, planned cell; a blank square must never become a task.
+  async function colorCell(row, index, swatch, guard, read) {
+    const before = (await read()).cell;
+    if (!before || ["saving", "error", "ambiguous"].includes(before.state)) {
+      throw new Error("The time block is unavailable or still syncing.");
+    }
+    if (before.state !== "planned" || before.color === swatch.color) return false;
+    const sameCell = cell => cell?.state === "planned" && cell.id === before.id && cell.color === before.color;
+    return withQuietEditor(execution, async () => {
+      const target = rowElement(row).querySelector('td[data-cell-param="' + CSS.escape(row.id) +
+        '"][data-hour-index="' + index + '"]');
+      if (!target?.matches(".planned")) throw new Error("The planned cell changed.");
+      guard();
+      target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+      const editor = await waitFor(async () => {
+        const live = await read();
+        return live.dialog?.id === "execute-treatment-dialog" && live.dialog.index === index &&
+          document.querySelector(execution);
+      }, guard, "SmartFlow did not open the selected cell.");
+      await waitFor(() => editor.querySelector('#highlight input[value="On"]')?.checked,
+        guard, "SmartFlow did not confirm the existing highlight.");
+      const ready = await read();
+      const sameEditor = live => live.dialog?.id === editor.id && live.dialog.index === index && editor.isConnected;
+      if (!sameEditor(ready)) throw new Error("The selected cell editor changed.");
+      if (ready.cell?.state === "protected") {
+        editor.querySelector("a.close").click();
+        await waitFor(() => !visible(editor), guard, "SmartFlow did not close the cell editor.");
+        return false;
+      }
+      const button = editor.querySelector(".colors-block:not(.disabled) ." + swatch.button);
+      if (!sameCell(ready.cell) || !button || editor.querySelector('#highlight input[value="On"]').disabled) {
+        throw new Error("The cell changed or its highlight is locked.");
+      }
+      button.click();
+      await waitFor(() => button.classList.contains("selected"), guard, "SmartFlow did not select the color.");
+      const latest = await read();
+      if (!sameEditor(latest) || !sameCell(latest.cell)) throw new Error("The cell changed before saving.");
+      guard();
+      done(editor);
+      await waitFor(async () => {
+        const live = await read();
+        if (live.error || live.cell?.state === "error") throw new Error("SmartFlow could not save the color.");
+        return !visible(editor) && live.cell?.id === before.id && live.cell.state === "planned" &&
+          live.cell.color === swatch.color;
+      }, guard, "SmartFlow has not confirmed the cell color.");
+      return true;
+    });
+  }
+
+  window.SmartFlowScheduleEditor = { applyRow, colorCell, waitFor };
 })();

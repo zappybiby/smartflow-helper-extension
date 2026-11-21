@@ -4,6 +4,7 @@
   var ROOT_ID = "sf-helper-root";
   var OPEN_CLASS = "sf-helper-open";
   var schedulePanel;
+  var flushPageNavigation;
   var layoutFrame = null;
   var layoutSecondPassFrame = null;
   var state = {
@@ -385,7 +386,7 @@
 
   function applyPageNavigation() {
     state.pageContext.generation += 1;
-    if (schedulePanel) schedulePanel.reset();
+    if (schedulePanel && !schedulePanel.navigatingColorDays()) schedulePanel.reset();
     markAllTabsDirty();
 
     state.controlled.requestSeq += 1;
@@ -523,24 +524,21 @@
 
     state.pageContext.generation = 1;
 
+    // Consume a completed day change before reporting the result of a multi-day edit.
+    flushPageNavigation = function () {
+      var nextRouteKey = currentRouteKey();
+      var nextPageDataKey = currentPageDataKey();
+      if (nextRouteKey === lastRouteKey && nextPageDataKey === lastPageDataKey) return;
+      lastRouteKey = nextRouteKey;
+      lastPageDataKey = nextPageDataKey;
+      applyPageNavigation();
+    };
+
     function scheduleNavigationRefresh() {
-      if (navigationTimer) {
-        return;
-      }
-
+      if (navigationTimer) return;
       navigationTimer = window.setTimeout(function () {
-        var nextRouteKey = currentRouteKey();
-        var nextPageDataKey = currentPageDataKey();
-
         navigationTimer = null;
-
-        if (nextRouteKey === lastRouteKey && nextPageDataKey === lastPageDataKey) {
-          return;
-        }
-
-        lastRouteKey = nextRouteKey;
-        lastPageDataKey = nextPageDataKey;
-        applyPageNavigation();
+        flushPageNavigation();
       }, 100);
     }
 
@@ -1487,7 +1485,8 @@
     body.appendChild(buildControlledPanel());
     schedulePanel = window.SmartFlowSchedulePanel({
       createElement: createElement,
-      getSheet: function (id, oldHour) { return helperCall("getScheduleSheet", [id, oldHour]); },
+      flushNavigation: function () { if (flushPageNavigation) flushPageNavigation(); },
+      getSheet: function (id, slot, colors) { return helperCall("getScheduleSheet", [id, slot, colors]); },
       contextKey: function () {
         return JSON.stringify([currentRouteKey(), currentPageDataKey(), state.pageContext.generation]);
       }

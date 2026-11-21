@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  window.SmartFlowSchedulePanel = function ({ createElement, getSheet, contextKey }) {
+  window.SmartFlowSchedulePanel = function ({ createElement, getSheet, contextKey, flushNavigation }) {
     const element = createElement("section", {
       className: "sf-helper-tab-panel sf-helper-schedule",
       attrs: { hidden: "", "data-sf-helper-panel": "schedule", "aria-label": "Bulk schedule" }
@@ -9,6 +9,12 @@
     const selectLines = createElement("button", {
       className: "sf-helper-button", text: "Select lines", attrs: { type: "button" }
     });
+    const colorLines = createElement("button", {
+      className: "sf-helper-button", text: "Color cells", attrs: { type: "button" }
+    });
+    const modes = createElement("div", { className: "sf-helper-schedule-modes" });
+    modes.append(selectLines, colorLines);
+    let coloring = false;
     const summary = createElement("div", { className: "sf-helper-schedule-summary" });
     const names = createElement("span");
     summary.append(createElement("strong", { text: "Selected:" }), names);
@@ -45,18 +51,31 @@
     const hourLabel = h => (h % 12 || 12) + (h < 12 ? " AM" : " PM");
     const hour = addPicker("Start at", 0, 23, hourLabel);
     const interval = addPicker("Interval", 1, 24, n => n + (n === 1 ? " hour" : " hours"));
+    const colorLabel = createElement("label", { text: "Color" });
+    const color = createElement("select", { attrs: { "aria-label": "Cell color" } });
+    for (const swatch of window.SmartFlowRecurringColor.palette) color.add(new Option(swatch.name, swatch.name));
+    color.value = "Pink";
+    colorLabel.append(color);
+    const futureLabel = createElement("label", { text: "Include later sheets" });
+    const future = createElement("input", { attrs: { type: "checkbox" } });
+    futureLabel.append(future);
+    controls.append(colorLabel, futureLabel);
     actions.append(cancel, apply);
-    element.append(selectLines, summary, controls, actions, status);
+    element.append(modes, summary, controls, actions, status);
 
     function update() {
       const labels = (sheet?.rows || []).filter(row => selected.has(row.id)).map(row => row.name);
       names.textContent = labels.join(", ") || "None";
       names.title = names.textContent;
-      selectLines.hidden = picking;
+      modes.hidden = selectLines.hidden = picking;
+      colorLines.disabled = running || loading || !sheet;
+      colorLabel.hidden = futureLabel.hidden = !coloring;
+      color.disabled = running;
+      future.disabled = running || !sheet?.days || sheet.days.indexOf(sheet.sheet) >= sheet.days.length - 1;
       summary.hidden = controls.hidden = actions.hidden = !picking;
       selectLines.disabled = running || loading || !sheet?.rows.length;
       cancel.disabled = running;
-      apply.textContent = "Apply to " + selected.size + (selected.size === 1 ? " line" : " lines");
+      apply.textContent = (coloring ? "Color " : "Apply to ") + selected.size + (selected.size === 1 ? " line" : " lines");
       apply.disabled = running || loading || !sheet || !selected.size || hour.value === "" || interval.value === "";
       hour.disabled = interval.disabled = running;
     }
@@ -100,10 +119,14 @@
       selected.clear();
       pendingCleanup.clear();
       hour.value = interval.value = "";
+      future.checked = false;
+      color.value = "Pink";
+      coloring = false;
     }
 
-    selectLines.addEventListener("click", () => {
-      if (selectLines.disabled || sheetContext !== contextKey()) return;
+    function beginPicking(colors) {
+      if (running || loading || sheetContext !== contextKey()) return;
+      coloring = colors;
       picking = true;
       status.textContent = "";
       syncCheckboxes();
@@ -122,7 +145,9 @@
       observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true,
         attributeFilter: ["data-id", "class", "hidden", "aria-expanded"] });
       refresh();
-    });
+    }
+    selectLines.addEventListener("click", () => beginPicking(false));
+    colorLines.addEventListener("click", () => beginPicking(true));
 
     cancel.addEventListener("click", () => {
       stopPicking();
@@ -147,7 +172,7 @@
       loading = true;
       update();
       try {
-        const next = await getSheet();
+        const next = await getSheet(null, null, coloring);
         if (ticket !== revision || contextKey() !== key) return;
         if (!next || key !== sheetContext || sheet?.patient !== next.patient || sheet?.sheet !== next.sheet) {
           stopPicking();
@@ -185,6 +210,31 @@
       running = true;
       syncCheckboxes();
       update();
+      if (coloring) {
+        const originUrl = location.href;
+        const checkRun = () => {
+          if (ticket !== revision || location.href !== originUrl) throw new Error("The patient or sheet changed.");
+        };
+        let message;
+        try {
+          message = await window.SmartFlowRecurringColor.apply({
+            origin: sheet, selected: batch, ...values, future: future.checked, getSheet,
+            swatch: window.SmartFlowRecurringColor.palette.find(item => item.name === color.value),
+            guard: checkRun, progress: text => { status.textContent = text; }
+          });
+        } catch (error) {
+          message = error.message;
+        } finally {
+          if (ticket === revision) flushNavigation();
+          running = false;
+          if (ticket === revision) {
+            stopPicking();
+            await refresh();
+            if (location.href === originUrl && !element.hidden) status.textContent = message;
+          } else if (!element.hidden) await refresh();
+        }
+        return;
+      }
       let completed = 0;
       let cleared = 0;
       let protectedCount = 0;
@@ -228,6 +278,6 @@
     });
 
     update();
-    return { element, refresh, reset };
+    return { element, refresh, reset, navigatingColorDays: () => running && coloring };
   };
 })();

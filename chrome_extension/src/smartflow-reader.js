@@ -798,19 +798,22 @@
     };
   }
 
-  function scheduleCell(row, parameter, sheetDate, hour) {
+  function scheduleCell(row, parameter, sheetDate, hour, byIndex) {
     if (!Number.isInteger(hour)) return null;
     var cells = Array.from(row.querySelectorAll("td[data-hour-index][data-cell-param]")).filter(function (cell) {
       var instant = sheetDate + Number(cell.dataset.hourIndex) * 3600000;
-      return cell.dataset.cellParam === parameter.parameterBaseID && new Date(instant).getHours() === hour;
+      return cell.dataset.cellParam === parameter.parameterBaseID &&
+        (byIndex ? Number(cell.dataset.hourIndex) === hour : new Date(instant).getHours() === hour);
     });
     if (cells.length !== 1) return { state: cells.length ? "ambiguous" : "absent" };
     var cell = cells[0];
     var index = Number(cell.dataset.hourIndex);
     var stamp = Math.floor(sheetDate / 3600000) + index;
-    var value = (parameter.values || []).find(function (entry) {
+    var values = (parameter.values || []).filter(function (entry) {
       return Math.floor(Date.parse(entry.date) / 3600000) === stamp;
     });
+    if (byIndex && values.length > 1) return { state: "ambiguous" };
+    var value = values[0];
     var state = "clear";
     if (cell.matches(".error-value")) state = "error";
     else if (cell.matches(".sync-value")) state = "saving";
@@ -819,14 +822,21 @@
         value.siItemID || value.isBilled || value.mediaFilePath || cell.textContent.trim() ||
         cell.matches(".cancelled, .discontinued") ? "protected" : "planned";
     } else if (cell.matches(".planned") || value?.st === 1) state = "saving";
-    return { state: state, index: index, id: value?.parameterValueID || null };
+    return { state: byIndex && value?.deleted ? "protected" : state, index: index,
+      color: value?.color ?? parameter.color ?? null, id: value?.parameterValueID || null };
   }
 
-  function getScheduleSheet(rowId, oldHour) {
+  function getScheduleSheet(rowId, oldHour, colors) {
     var table = document.querySelector("#flowsheetTable");
     var context = isModernSite() && hospitalizationIdFromPath() && window.SmartFlowSiteData.getPatientContext();
     if (!table || !context || !context.flowsheet.flowsheetID) return null;
 
+    if (colors) {
+      var grid = window.SmartFlowSiteData.readComponentProps(table, function (props) {
+        return !!props.flowsheet?.flowsheetID;
+      });
+      if (grid?.flowsheet.flowsheetID !== context.flowsheet.flowsheetID) return null;
+    }
     var rows = [];
     var section = "";
     var sheetDate = Date.parse(context.flowsheet.date);
@@ -839,16 +849,23 @@
       if (rowId && row.dataset.id !== rowId) return;
       var name = row.querySelector(".pr-heading .pb-name");
       var param = getRowParameter(row);
-      if (!name || !param || param.parameterBaseID !== row.dataset.id || param.discontinued || param.isCri ||
-          (param.fluidParameterID && !sameHospitalizationId(param.fluidParameterID, param.parameterBaseID)) ||
+      if (!name || !param || param.parameterBaseID !== row.dataset.id || param.discontinued ||
+          (colors ? !row.querySelector("td[data-cell-param][data-hour-index]") :
+            param.isCri || (param.fluidParameterID && !sameHospitalizationId(param.fluidParameterID, param.parameterBaseID))) ||
           !isVisible(name) || row.matches(".pb-locked, .locked") || rowHasDiscontinuedState(row)) return;
       var item = { id: row.dataset.id, name: textOf(name), section: section,
         start: param.planningStartDate || null, frequency: Number(param.frequency ?? 0) };
+      if (colors) {
+        // Copied days can assign a new row ID. Keep the original order details for matching.
+        var catalogId = param.localInventoryItemID || (/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(param.name) && param.name);
+        item.orderKey = (catalogId || item.start) ? JSON.stringify([section, item.name,
+          textOf(row.querySelector(".prescription")), catalogId || null, catalogId ? null : item.start]) : null;
+      }
       if (rowId) {
         item.sheetDate = sheetDate;
         item.syncing = row.matches(".sync-value");
         item.error = row.matches(".error-value");
-        item.cell = scheduleCell(row, param, sheetDate, oldHour);
+        item.cell = scheduleCell(row, param, sheetDate, oldHour, colors);
         var dialog = document.querySelector("#execute-treatment-dialog, [id$='-planning-dialog']");
         var props = window.SmartFlowSiteData.readComponentProps(dialog, function (p) {
           return p.param && p.flowsheet;
@@ -862,7 +879,18 @@
       }
       rows.push(item);
     });
-    return { patient: context.hospitalization.id, sheet: context.flowsheet.flowsheetID, rows: rows };
+    var sheet = { patient: context.hospitalization.id, sheet: context.flowsheet.flowsheetID, rows: rows };
+    if (colors) {
+      sheet.date = sheetDate;
+      sheet.hours = context.flowsheet.durationHours;
+      var picker = document.querySelector('[data-testid="flowsheet-day-picker-trigger"], [data-testid="flowsheet-phone-day-select"]');
+      var days = window.SmartFlowSiteData.readComponentProps(picker, function (props) {
+        return Array.isArray(props.flowsheetIds) &&
+          props.flowsheetIds[props.dayIndex] === sheet.sheet;
+      });
+      sheet.days = days ? days.flowsheetIds.slice() : [sheet.sheet];
+    }
+    return sheet;
   }
 
   function readFlowsheetTable() {

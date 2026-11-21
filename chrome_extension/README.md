@@ -4,6 +4,9 @@ Chrome extension helpers for Smart Flow pages.
 
 On a patient flowsheet, open **Schedule → Select lines**, then check the boxes to the left of the line names on the flowsheet. The compact Schedule panel lists the selected names on one line. To move Attitude, Resp. rate, and Diet from 1 AM to 3 AM every 6 hours, choose **Start at → 3 AM** and **Interval → 6 hours**, then apply once. The helper reads each line’s previous start time automatically, even when the lines originally started at different hours.
 
+Use **Schedule → Color cells** to give selected lines a recurring cell highlight. For an hourly Fluids line, choose **Pink**, a start hour and **4 hours**. Only empty, already-planned cells on that interval are recolored. **Include later sheets** continues from the same start time through existing days for this patient. If a line cannot be matched uniquely on a later day, the helper skips it and reports it.
+
+
 The helper uses SmartFlow’s own editors in the background during a bulk change. The Schedule panel shows which line is being updated. After the updated start and interval appear on the sheet, the helper clears that line’s old start block if it is still planned, empty, and outside the new schedule. Recorded values, media, and billed cells are preserved. If SmartFlow cannot confirm a save, the batch stops at that row. Applying again can finish a pending highlight change.
 
 Load `chrome_extension` as an unpacked extension. On a Smart Flow page, the content script exposes:
